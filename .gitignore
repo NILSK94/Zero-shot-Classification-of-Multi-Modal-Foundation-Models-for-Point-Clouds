@@ -1,0 +1,23 @@
+# Only source files belong in Git.
+*
+!.gitignore
+!.gitattributes
+!.env.example
+!README.md
+!requirements.txt
+!requirements-legacy.txt
+!app.py
+!converter_OFF_PLY.py
+!converter_PLY_PNG.py
+!Evaluator_stablediffusion.py
+!Confusion_Matrix_Evaluation.ipynb
+!GEMINI_classifier_modelnet.ipynb
+!GEMINI_classifier_real_data.ipynb
+!START_TOOL.bat
+!start_tool.ps1
+!mmfm_tool/
+mmfm_tool/*
+!mmfm_tool/*.py
+!tests/
+tests/*
+!tests/test_*.py
