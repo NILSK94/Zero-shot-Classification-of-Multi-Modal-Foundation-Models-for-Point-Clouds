@@ -18,6 +18,3 @@
 !mmfm_tool/
 mmfm_tool/*
 !mmfm_tool/*.py
-!tests/
-tests/*
-!tests/test_*.py

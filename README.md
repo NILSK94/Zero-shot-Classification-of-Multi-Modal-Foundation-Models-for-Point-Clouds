@@ -37,9 +37,3 @@ Runs, figures, and paper exports are saved in `artifacts/`. Local data, API keys
 - `Confusion_Matrix_Evaluation.ipynb`, `Evaluator_stablediffusion.py`: original evaluation scripts.
 
 Change class lists and view angles in `mmfm_tool/constants.py`. The original scripts and notebooks use separate dependencies listed in `requirements-legacy.txt`.
-
-## Tests
-
-```sh
-python -m pytest -q
-```
