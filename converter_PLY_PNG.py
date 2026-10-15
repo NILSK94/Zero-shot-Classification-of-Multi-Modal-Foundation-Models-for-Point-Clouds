@@ -15,7 +15,7 @@ def render_isometric_views(pcd, output_dir, base_name, width=512, height=512):
         [1.0, 1.0, 1.0],
         [-1.0, 1.0, 1.0],
         [1.0, -1.0, 1.0],
-        # [-1.0, -1.0, 1.0],  # Optional fourth view
+        [-1.0, -1.0, 1.0],  # Optional fourth view
     ]
 
     bbox = pcd.get_axis_aligned_bounding_box()
