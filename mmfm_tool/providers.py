@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from .constants import PROMPT_VERSION
 
@@ -44,6 +48,10 @@ def build_prompt(
     labels: Sequence[str],
     view_count: int,
     geometry: dict[str, float] | None = None,
+    *,
+    decision: bool = False,
+    photo_check: bool = False,
+    criteria_reference: bool = False,
 ) -> str:
     label_text = ", ".join(sorted(labels))
     if dataset == "modelnet":
@@ -68,13 +76,30 @@ def build_prompt(
             "Treat these dimensions only as scale and proportion evidence."
         )
 
+    response_instruction = (
+        "Select exactly one class using the typed Choice answer. "
+        if decision else
+        "Your entire response must be exactly the selected label as written in the list. "
+        "Return no JSON, quotes, punctuation, Markdown, confidence, explanation, or additional text. "
+    )
+    selection_instruction = "Choose exactly one label from this closed list:"
+    if criteria_reference:
+        selection_instruction = "Choose exactly one label from the closed class list in criteria."
+        response_instruction = response_instruction.replace("as written in the list", "as written in criteria")
+    if photo_check:
+        selection_instruction = "Evaluate the candidate classes against the same point-cloud object:"
+        response_instruction = (
+            "For each candidate class, answer the supplied yes/no visual check using a Noul probability. "
+            "Evaluate all supplied views together as evidence about the same object. "
+            "A candidate class is a hypothesis to check, not a known description of the object. "
+        )
+    class_list = "" if criteria_reference else f"{label_text}\n"
     return (
         f"Protocol: {PROMPT_VERSION}\n"
         f"{context}{geometry_text}\n"
-        "Choose exactly one label from this closed list:\n"
-        f"{label_text}\n"
-        "Your entire response must be exactly the selected label as written in the list. "
-        "Return no JSON, quotes, punctuation, Markdown, confidence, explanation, or additional text. "
+        f"{selection_instruction}\n"
+        f"{class_list}"
+        f"{response_instruction}"
         "Do not invent another class and do not infer the answer from filenames or metadata."
     )
 
@@ -101,6 +126,15 @@ class BaseProvider:
         self.model = model.strip()
         self.api_key = api_key.strip()
         self.base_url = base_url.strip().rstrip("/")
+
+    def build_prompt(
+        self,
+        dataset: str,
+        labels: Sequence[str],
+        view_count: int,
+        geometry: dict[str, float] | None = None,
+    ) -> str:
+        return build_prompt(dataset, labels, view_count, geometry=geometry)
 
     def classify(
         self,
@@ -220,6 +254,165 @@ class GeminiProvider(BaseProvider):
         )
 
 
+class JevProvider(BaseProvider):
+    """OpenRouter Decisions API; the original images are sent without resizing."""
+
+    provider_name = "jev"
+    endpoint = "https://openrouter.ai/api/alpha/decisions"
+
+    def __init__(self, model: str, api_key: str = "") -> None:
+        super().__init__(model, api_key)
+        if not self.api_key:
+            raise ProviderError("OPENROUTER_API_KEY fehlt.")
+        if not self.model:
+            raise ProviderError("JEV-Modell-ID fehlt.")
+
+    def build_prompt(
+        self,
+        dataset: str,
+        labels: Sequence[str],
+        view_count: int,
+        geometry: dict[str, float] | None = None,
+    ) -> str:
+        return build_prompt(dataset, labels, view_count, geometry=geometry, criteria_reference=True)
+
+    @staticmethod
+    def build_questions(prompt: str, labels: Sequence[str]) -> dict[str, Any]:
+        return {
+            "classification": {
+                "type": "choice",
+                "instructions": prompt,
+                "criteria": {label: label for label in sorted(labels)},
+            },
+        }
+
+    def parse_answer(self, data: dict[str, Any], labels: Sequence[str]) -> str:
+        answer = data["answers"]["classification"]
+        if answer["type"] != "choice" or not isinstance(answer["choice"], str):
+            raise ValueError("Choice-Antwort fehlt")
+        return validate_label(answer["choice"], labels)
+
+    def classify(
+        self,
+        image_paths: Sequence[Path],
+        prompt: str,
+        labels: Sequence[str],
+    ) -> ProviderResult:
+        from PIL import Image
+
+        if not image_paths or not labels:
+            raise ProviderError("JEV benötigt Bilder und eine geschlossene Klassenliste.")
+        state: list[Any] = []
+        for index, path in enumerate(image_paths, start=1):
+            with Image.open(path) as image:
+                width, height = image.size
+                if image.format not in {"PNG", "JPEG"} or getattr(image, "is_animated", False):
+                    raise ProviderError("JEV unterstützt nur statische PNG- und JPEG-Bilder.")
+                mime = "image/png" if image.format == "PNG" else "image/jpeg"
+            if not (280 <= width <= 1568 and 280 <= height <= 1568):
+                raise ProviderError(
+                    f"JEV-Bildgröße unzulässig: {width} × {height}. Erforderlich: 280–1568 Pixel "
+                    "je Seite und mindestens 78.400 Pixel insgesamt. Ansichten passend vorbereiten."
+                )
+            if path.stat().st_size > 16 * 1024 * 1024:
+                raise ProviderError("Ein JEV-Bild darf höchstens 16 MiB groß sein.")
+            state.extend([
+                f"View {index} of the same point-cloud object:",
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{_encode_image(path)}"}},
+            ])
+        payload = {
+            "model": self.model,
+            "state": state,
+            "questions": self.build_questions(prompt, labels),
+        }
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        if len(body) > 32 * 1024 * 1024:
+            raise ProviderError("Die JEV-Anfrage überschreitet das Limit von 32 MiB.")
+        request = Request(
+            self.endpoint,
+            data=body,
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=120) as response:
+                raw = response.read().decode("utf-8")
+        except HTTPError as exc:
+            hints = {401: "API-Key prüfen", 402: "OpenRouter-Guthaben prüfen", 429: "Rate-Limit erreicht"}
+            raise ProviderError(
+                f"JEV/OpenRouter HTTP {exc.code}: {hints.get(exc.code, 'Anfrage fehlgeschlagen')}."
+            ) from exc
+        except (URLError, TimeoutError) as exc:
+            raise ProviderError("JEV/OpenRouter ist nicht erreichbar oder die Anfrage dauerte zu lange.") from exc
+        try:
+            data = json.loads(raw)
+            label = self.parse_answer(data, labels)
+            usage = data["usage"]
+            model_version = data["model"]
+            if not isinstance(usage, dict) or not isinstance(model_version, str) or not model_version:
+                raise ValueError("Modellversion oder Usage fehlt")
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ProviderError("JEV/OpenRouter lieferte keine gültige Decisions-Antwort.") from exc
+        return ProviderResult(label=label, raw_response=raw, model_version=model_version, usage=usage)
+
+
+def photo_check_scores(raw_response: str) -> dict[str, float]:
+    """Read independent P(yes) values; never normalize them to sum to one."""
+    data = json.loads(raw_response)
+    answers = data["answers"]
+    if not isinstance(answers, dict) or not answers:
+        raise ValueError("Photo-Check-Antworten fehlen")
+    scores: dict[str, float] = {}
+    for key, answer in answers.items():
+        if not key.startswith("class_") or not key[6:] or not isinstance(answer, dict):
+            raise ValueError("Ungültige Photo-Check-Klasse")
+        value = answer.get("noul")
+        if (answer.get("type") != "noul" or isinstance(value, bool)
+                or not isinstance(value, (float, int)) or not math.isfinite(value) or not 0 <= value <= 1):
+            raise ValueError("Ungültige Ja-Wahrscheinlichkeit")
+        scores[key[6:]] = float(value)
+    return scores
+
+
+class JevPhotoCheckProvider(JevProvider):
+    """One Noul question per candidate class, sharing one set of image views."""
+
+    provider_name = "jev_photo_check"
+
+    def build_prompt(
+        self,
+        dataset: str,
+        labels: Sequence[str],
+        view_count: int,
+        geometry: dict[str, float] | None = None,
+    ) -> str:
+        return build_prompt(dataset, labels, view_count, geometry=geometry, photo_check=True)
+
+    @staticmethod
+    def build_questions(prompt: str, labels: Sequence[str]) -> dict[str, Any]:
+        return {
+            f"class_{label}": {
+                "type": "noul",
+                "instructions": (
+                    f"{prompt}\nCandidate class: {label}. "
+                    f"Does the object in the supplied point-cloud views belong to the class '{label}'?"
+                ),
+                "criteria": {
+                    "true": f"The depicted object belongs to the candidate class '{label}'.",
+                    "false": f"The depicted object belongs to a different class, or the views do not support '{label}'.",
+                },
+            }
+            for label in sorted(labels)
+        }
+
+    def parse_answer(self, data: dict[str, Any], labels: Sequence[str]) -> str:
+        scores = photo_check_scores(json.dumps(data))
+        if set(scores) != set(labels):
+            raise ValueError("Photo-Check-Antworten stimmen nicht mit der Klassenliste überein")
+        # Ties use alphabetical order, independent of ground truth and filenames.
+        return max(sorted(scores), key=scores.__getitem__)
+
+
 class MockProvider(BaseProvider):
     """Cost-free deterministic provider for end-to-end pipeline validation."""
 
@@ -252,6 +445,10 @@ def create_provider(provider: str, model: str, api_key: str = "", base_url: str 
         return LiteLLMProvider(model=model, api_key=api_key, base_url=base_url)
     if normalized == "gemini":
         return GeminiProvider(model=model, api_key=api_key)
+    if normalized == "jev":
+        return JevProvider(model=model, api_key=api_key)
+    if normalized == "jev_photo_check":
+        return JevPhotoCheckProvider(model=model, api_key=api_key)
     if normalized == "mock":
         return MockProvider(model=model or "mock-v1")
     raise ProviderError(f"Unbekannter Provider: {provider}")

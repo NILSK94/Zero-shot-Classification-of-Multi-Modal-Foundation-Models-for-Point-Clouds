@@ -15,7 +15,8 @@ import pandas as pd
 from .constants import PROMPT_VERSION
 from .datasets import image_paths_from_row, manifest_fingerprint
 from .evaluation import evaluate_results, load_results_csv
-from .providers import BaseProvider, build_prompt, create_provider, prompt_fingerprint
+from .jev_checks import photo_check_table
+from .providers import BaseProvider, create_provider, prompt_fingerprint
 
 RunProgress = Callable[[int, int, str, dict[str, object]], None]
 
@@ -36,6 +37,12 @@ class ModelTarget:
         }
         if self.base_url:
             values["base_url"] = self.base_url
+        if self.provider == "jev_photo_check":
+            values["decision_protocol"] = "jev-photo-check-v1"
+            values["selection_rule"] = "maximum independent yes-probability; alphabetical tie break"
+        elif self.provider == "jev":
+            values["decision_protocol"] = "jev-class-list-v2"
+            values["selection_rule"] = "one typed Choice from the closed class list; shared label-only prompt"
         return values
 
 
@@ -175,6 +182,8 @@ def _task_id(task: dict[str, object], spec: ExperimentSpec) -> str:
             str(task["repeat"]),
         ]
     )
+    if target.provider == "jev":
+        payload += "|jev-class-list-v2"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -192,7 +201,7 @@ def _execute_task(
     geometry = None
     if spec.dataset == "s3dis" and condition == "rgb_aabb":
         geometry = {name: float(row[name]) for name in ("width", "depth", "height")}
-    prompt_text = build_prompt(spec.dataset, spec.labels, view_count, geometry=geometry)
+    prompt_text = provider.build_prompt(spec.dataset, spec.labels, view_count, geometry=geometry)
     base_result: dict[str, object] = {
         "task_id": identifier,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -328,5 +337,7 @@ def run_experiment(
                         submit_next()
 
     results = load_results_csv(results_path)
+    if any(target.provider == "jev_photo_check" for target in targets):
+        photo_check_table(results).to_csv(destination / "photo_checks.csv", index=False, encoding="utf-8")
     evaluated = evaluate_results(results, destination)
     return results, evaluated

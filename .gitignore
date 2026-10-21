@@ -1,4 +1,4 @@
-# Only source files belong in Git.
+# Publish source only. Local datasets, exports, backups, credentials and private documents stay ignored.
 *
 !.gitignore
 !.gitattributes
@@ -18,3 +18,7 @@
 !mmfm_tool/
 mmfm_tool/*
 !mmfm_tool/*.py
+!mmfm_tool/paper_figure_profile.json
+!tests/
+tests/*
+!tests/*.py

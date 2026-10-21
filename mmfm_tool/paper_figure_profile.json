@@ -1,0 +1,251 @@
+{
+  "version": "mdpi-approved-2026-10-21-v6-s3dis-paired-aabb",
+  "modelnet_objects": 1860,
+  "modelnet_classes": 33,
+  "s3dis_objects": 2345,
+  "s3dis_classes": 13,
+  "minimum_coverage": 0.95,
+  "models": [
+    {
+      "model": "gpt-4o",
+      "provider": "openai",
+      "scope": "current_paper_protocol",
+      "title": "GPT-4o",
+      "stem": "GPT4o",
+      "key": "gpt4o",
+      "color": "#d62728",
+      "views": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "gains": [
+        "toilet",
+        "bench",
+        "bed",
+        "chair"
+      ],
+      "difficult": [
+        "xbox",
+        "wardrobe",
+        "keyboard",
+        "glass_box",
+        "range_hood"
+      ]
+    },
+    {
+      "model": "gpt-4.1",
+      "provider": "openai",
+      "scope": "current_paper_protocol",
+      "title": "GPT-4.1",
+      "stem": "GPT41",
+      "key": "gpt41",
+      "color": "#ff7f0e",
+      "views": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "gains": [
+        "toilet",
+        "bench",
+        "car",
+        "plant"
+      ],
+      "difficult": [
+        "xbox",
+        "keyboard",
+        "tv_stand",
+        "range_hood",
+        "glass_box"
+      ]
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "provider": "openai",
+      "scope": "current_paper_protocol",
+      "title": "GPT-5.6 Sol",
+      "stem": "GPT56Sol",
+      "key": "gpt56sol",
+      "color": "#2ca02c",
+      "views": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "gains": [
+        "piano",
+        "mantel",
+        "car",
+        "cup"
+      ],
+      "difficult": [
+        "xbox",
+        "tv_stand",
+        "range_hood",
+        "glass_box",
+        "flower_pot"
+      ]
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "provider": "openai",
+      "scope": "current_paper_protocol",
+      "title": "GPT-5.6 Luna",
+      "stem": "GPT56Luna",
+      "key": "gpt56luna",
+      "color": "#8c564b",
+      "views": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "gains": [
+        "range_hood",
+        "chair",
+        "cup",
+        "toilet"
+      ],
+      "difficult": [
+        "xbox",
+        "mantel",
+        "glass_box",
+        "laptop",
+        "wardrobe"
+      ]
+    },
+    {
+      "model": "gemini-3.6-flash",
+      "provider": "gemini",
+      "scope": "current_paper_protocol",
+      "title": "Gemini 3.6 Flash",
+      "stem": "Gemini36",
+      "key": "gemini36",
+      "color": "#1f77b4",
+      "views": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "gains": [
+        "bed",
+        "laptop",
+        "flower_pot",
+        "range_hood"
+      ],
+      "difficult": [
+        "xbox",
+        "wardrobe",
+        "tv_stand",
+        "stairs"
+      ]
+    },
+    {
+      "model": "ministral-3:8b",
+      "provider": "ollama",
+      "scope": "modelnet33_exact_ids",
+      "title": "Ministral 3:8B",
+      "stem": "Ministral",
+      "key": "ministral",
+      "color": "#17becf",
+      "views": [
+        2,
+        3,
+        4
+      ],
+      "gains": [
+        "bowl",
+        "chair",
+        "cup",
+        "plant"
+      ],
+      "difficult": [
+        "bed",
+        "bookshelf",
+        "range_hood",
+        "tv_stand",
+        "xbox"
+      ]
+    },
+    {
+      "model": "typesafe/jev-1.14",
+      "provider": "jev",
+      "scope": "current_paper_protocol",
+      "title": "Jev-1.14",
+      "stem": "Jev114",
+      "key": "jev114",
+      "color": "#e377c2",
+      "views": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "gains": [
+        "toilet",
+        "chair",
+        "cup"
+      ],
+      "difficult": [
+        "bookshelf",
+        "mantel",
+        "range_hood",
+        "tv_stand",
+        "xbox"
+      ],
+      "context": [
+        "glass_box",
+        "vase"
+      ]
+    }
+  ],
+  "single_view_models": [
+    {
+      "model": "gpt-5.4",
+      "provider": "openai",
+      "scope": "modelnet33_exact_ids",
+      "title": "GPT-5.4",
+      "color": "#9467bd"
+    },
+    {
+      "model": "llama3.2-vision",
+      "provider": "ollama",
+      "scope": "modelnet33_exact_ids",
+      "title": "Llama 3.2 Vision",
+      "color": "#7f7f7f"
+    }
+  ],
+  "s3dis_models": [
+    "gemini-3.6-flash",
+    "gpt-5.6-sol",
+    "gpt-4o",
+    "typesafe/jev-1.14"
+  ],
+  "overview_order": [
+    "gemini-3.6-flash",
+    "gpt-4.1",
+    "gpt-5.6-sol",
+    "gpt-4o",
+    "gpt-5.6-luna",
+    "ministral-3:8b",
+    "typesafe/jev-1.14"
+  ],
+  "s3dis_paired_analysis": {
+    "class_selection": "all evaluated true classes",
+    "normalization": "all objects per true class",
+    "transition_panels": [
+      "incorrect_to_correct",
+      "correct_to_incorrect"
+    ],
+    "colormap": "Blues",
+    "scale_percent": [
+      0,
+      100
+    ]
+  }
+}

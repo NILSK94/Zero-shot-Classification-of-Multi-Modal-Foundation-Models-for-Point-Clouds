@@ -10,6 +10,7 @@ import streamlit as st
 
 from mmfm_tool.constants import MODELNET_CLASSES, S3DIS_CLASSES
 from mmfm_tool.datasets import (
+    image_paths_from_row,
     load_prepared_s3dis_manifest,
     scan_modelnet_manifest,
     scan_s3dis_annotations,
@@ -18,8 +19,13 @@ from mmfm_tool.datasets import (
 )
 from mmfm_tool.evaluation import load_results_csv
 from mmfm_tool.figures import confusion_matrix_grid, model_only_legend
+from mmfm_tool.confusion_ui import render_confusion_explorer
 from mmfm_tool.legacy_results import LegacyResultError, import_legacy_results, load_legacy_results
+from mmfm_tool.jev_checks import run_classification_preview
+from mmfm_tool.local_paths import data_paths, find_paper_reference_figures
+from mmfm_tool.providers import JevProvider, build_prompt, photo_check_scores
 from mmfm_tool.paper_export import build_paper_export
+from mmfm_tool.publication_ui import render_publication_export
 from mmfm_tool.rendering import prepare_s3dis_views
 from mmfm_tool.run_comparison import (
     PROTOCOL_LABELS,
@@ -37,16 +43,18 @@ from mmfm_tool.runner import (
 )
 
 PROJECT_DIR = Path(__file__).resolve().parent
-DEFAULT_MODELNET = Path(os.getenv("MODELNET_PATH", str(PROJECT_DIR / "data" / "modelnet")))
-DEFAULT_S3DIS = Path(os.getenv("S3DIS_PATH", str(PROJECT_DIR / "data" / "s3dis")))
-DEFAULT_PREPARED = PROJECT_DIR / "artifacts" / "s3dis_prepared"
-DEFAULT_RUNS = PROJECT_DIR / "artifacts" / "runs"
-DEFAULT_OLD_RESULTS = Path(os.getenv("LEGACY_RESULTS_PATH", str(PROJECT_DIR / "data" / "legacy_results")))
-DEFAULT_PAPER_EXPORT = PROJECT_DIR / "artifacts" / "paper_exports" / "current"
+LOCAL_DATA_PATHS = data_paths(PROJECT_DIR)
+DEFAULT_MODELNET = LOCAL_DATA_PATHS["modelnet"]
+DEFAULT_S3DIS = LOCAL_DATA_PATHS["s3dis"]
+DEFAULT_PREPARED = LOCAL_DATA_PATHS["prepared"]
+DEFAULT_RUNS = LOCAL_DATA_PATHS["runs"]
+DEFAULT_OLD_RESULTS = LOCAL_DATA_PATHS["legacy_results"]
+DEFAULT_PAPER_EXPORT = LOCAL_DATA_PATHS["paper_export"]
+DEFAULT_HISTORICAL_CSV = LOCAL_DATA_PATHS["historical_csv"]
 DEFAULT_LITELLM_BASE_URL = os.getenv("LITELLM_BASE_URL", "")
 DEFAULT_QWEN_MODEL = os.getenv("LITELLM_MODEL", "")
 
-st.set_page_config(page_title="MMFM Paper Lab", page_icon="◈", layout="wide")
+st.set_page_config(page_title="MMFM Lab", page_icon="◈", layout="wide")
 st.markdown(
     """
     <style>
@@ -86,6 +94,8 @@ def configured_targets() -> list[ModelTarget]:
         targets.append(ModelTarget("mock", "mock-v1"))
     if use_gemini:
         targets.extend(ModelTarget("gemini", model, gemini_key) for model in split_models(gemini_models))
+    if use_jev:
+        targets.extend(ModelTarget("jev", model, openrouter_key) for model in split_models(jev_models))
     if use_litellm:
         targets.extend(
             ModelTarget(
@@ -114,6 +124,27 @@ def read_optional_csv(path: Path) -> pd.DataFrame:
         return pd.read_csv(path)
     except pd.errors.EmptyDataError:
         return pd.DataFrame()
+
+
+def show_photo_check(result: dict | pd.Series, threshold: float, key: str) -> None:
+    if result.get("provider") != "jev_photo_check" or result.get("status") != "ok":
+        return
+    scores = photo_check_scores(str(result["raw_response"]))
+    selected = str(result["pred_label"])
+    table = pd.DataFrame([
+        {"Klasse": label, "P(Ja)": score, "Vorhersage": label == selected,
+         "Prüfschwelle erreicht": score >= threshold}
+        for label, score in sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+    ])
+    st.caption("Jede Klasse wurde unabhängig geprüft. Die Ja-Wahrscheinlichkeiten ergeben zusammen nicht zwingend 100 %.")
+    if scores[selected] < threshold:
+        st.warning(f"Zum Prüfen markiert: {selected} erreicht {scores[selected]:.1%}, die Prüfschwelle liegt bei {threshold:.0%}. Die Vorhersage zählt weiterhin in der Auswertung.")
+    elif sum(value >= threshold for value in scores.values()) > 1:
+        st.warning("Mehrere Klassen erreichen die Prüfschwelle. Als Vorhersage zählt die Klasse mit dem höchsten P(Ja).")
+    st.dataframe(table, hide_index=True, use_container_width=True,
+                 column_config={"P(Ja)": st.column_config.ProgressColumn("P(Ja)", min_value=0., max_value=1., format="%.3f")})
+    st.download_button("Photo-Check-Werte herunterladen", table.to_csv(index=False).encode("utf-8"),
+                       file_name="photo_check.csv", mime="text/csv", key=key)
 
 
 @st.cache_data(show_spinner=False)
@@ -183,14 +214,32 @@ if use_litellm and litellm_max_concurrent_requests == 1:
 if use_litellm and litellm_base_url.casefold().startswith("http://"):
     st.sidebar.warning(
         "Diese LiteLLM-URL verwendet unverschlüsseltes HTTP. API-Key und Bilddaten können auf dem Transportweg "
-        "mitgelesen werden. Für Paper-Daten ist HTTPS dringend empfohlen."
+        "mitgelesen werden. Für Forschungsdaten ist HTTPS dringend empfohlen."
     )
 
-st.title("MMFM Paper Lab")
+use_jev = st.sidebar.checkbox("JEV via OpenRouter", value=False)
+jev_threshold = .8  # Used only when inspecting historical Noul results.
+jev_models = st.sidebar.text_input(
+    "JEV-Modell-ID(s)",
+    os.getenv("JEV_MODEL", "typesafe/jev-1.14"),
+    help="Mehrere IDs durch Komma trennen. Eine feste Version macht Läufe reproduzierbar.",
+)
+openrouter_key = st.sidebar.text_input(
+    "OpenRouter API-Key",
+    value=os.getenv("OPENROUTER_API_KEY", ""),
+    type="password",
+    help="Wird nur im laufenden Prozess verwendet und nie in Ergebnisdateien gespeichert.",
+)
+if use_jev:
+    st.sidebar.caption(
+        "JEV verwendet dieselbe Klassifikationsaufgabe; die erlaubten Klassen stehen unter criteria."
+    )
+
+st.title("MMFM Lab")
 st.caption("Reproduzierbare Zero-shot-Klassifikation von isometrischen Punktwolkenansichten")
 
-overview_tab, preparation_tab, experiment_tab, results_tab = st.tabs(
-    ["Übersicht", "S3DIS vorbereiten", "Experimente", "Ergebnisse"]
+overview_tab, preparation_tab, photo_check_tab, experiment_tab, results_tab, publication_tab = st.tabs(
+    ["Übersicht", "S3DIS vorbereiten", "JEV Bildtest", "Experimente", "Ergebnisse", "Auswertungen"]
 )
 
 with overview_tab:
@@ -227,7 +276,7 @@ with overview_tab:
         )
         st.dataframe(view_summary, hide_index=True, use_container_width=True)
 
-    st.subheader("Verbesserungen gegenüber dem Paper von 2025")
+    st.subheader("Funktionen und Auswertung")
     st.markdown(
         """
         <div class="paper-note">
@@ -339,23 +388,102 @@ with preparation_tab:
                 use_container_width=True,
             )
 
+with photo_check_tab:
+    st.subheader("JEV Klassifikation mit 1–2 Bildern")
+    st.write("Wähle ein Objekt. JEV wählt anhand einer oder zweier Ansichten genau eine Klasse aus der bisherigen Klassenliste unter criteria.")
+    st.caption("Dieser Bildtest wird separat gespeichert und fließt nicht in die wissenschaftlichen Runs ein. Für die vollständige Versuchsmatrix anschließend „Experimente“ verwenden.")
+    preview_dataset = st.radio("Bildtest: Datensatz", ["ModelNet", "S3DIS"], horizontal=True)
+    preview_records = pd.DataFrame()
+    try:
+        if preview_dataset == "ModelNet":
+            preview_records = select_paired_modelnet(cached_modelnet(str(modelnet_path)), (1, 2, 3, 4))
+        else:
+            preview_records = prepared_frame(prepared_root / "s3dis_manifest.csv")
+            if not preview_records.empty:
+                preview_records = preview_records[preview_records["status"] == "ok"].copy()
+    except Exception as exc:
+        st.info(f"Bildtest: {exc}")
+    if preview_records.empty:
+        st.info("Für den Bildtest zuerst den Datensatzpfad setzen bzw. S3DIS-Ansichten vorbereiten.")
+    else:
+        preview_labels = tuple(sorted(preview_records["label"].unique()))
+        preview_search = st.text_input("Bildtest: Objekt suchen", placeholder="z. B. chair oder Area_5").strip()
+        object_rows = preview_records[["sample_id"]].drop_duplicates()
+        if preview_search:
+            object_rows = object_rows[object_rows["sample_id"].str.contains(preview_search, case=False, regex=False)]
+        if object_rows.empty:
+            st.info("Kein passendes Objekt gefunden.")
+        else:
+            preview_sample = st.selectbox("Bildtest: Objekt", object_rows["sample_id"].tolist())
+            sample_rows = preview_records[preview_records["sample_id"] == preview_sample]
+            preview_row = sample_rows.sort_values("view_count").iloc[-1] if "view_count" in sample_rows else sample_rows.iloc[0]
+            preview_count = st.radio("Bildtest: Anzahl Bilder", [1, 2], index=1, horizontal=True)
+            try:
+                preview_images = image_paths_from_row(preview_row, preview_count)
+            except (ValueError, OSError) as exc:
+                preview_images = []
+                st.warning(f"Bildtest: {exc}")
+            for image_index, (column, path) in enumerate(zip(st.columns(preview_count), preview_images), start=1):
+                column.image(str(path), caption=f"Ansicht {image_index}", use_container_width=True)
+            preview_geometry = None
+            if preview_dataset == "S3DIS" and st.checkbox("Bildtest: AABB-Maße verwenden", value=False):
+                preview_geometry = {name: float(preview_row[name]) for name in ("width", "depth", "height")}
+                st.write({f"{name} [m]": value for name, value in preview_geometry.items()})
+            preview_models = split_models(jev_models)
+            preview_model = st.selectbox("Bildtest: JEV-Modell", preview_models or ["typesafe/jev-1.14"])
+            preview_prompt = build_prompt(preview_dataset.lower(), preview_labels, preview_count, preview_geometry, criteria_reference=True)
+            with st.expander("Bildtest: Fragen und Kriterien ansehen"):
+                st.json(JevProvider.build_questions(preview_prompt, preview_labels))
+            st.caption(f"1 Anfrage mit {preview_count} Bild(ern), einer Klassenauswahl und {len(preview_labels)} erlaubten Klassen. Der API-Key wird aus der Seitenleiste verwendet.")
+            preview_confirmed = st.checkbox("Ich bestätige die API-Kosten für diesen einzelnen Bildtest.", value=False)
+            if st.button("1–2 Bilder mit JEV testen", type="primary", disabled=not preview_images):
+                if not openrouter_key.strip():
+                    st.error("OpenRouter API-Key fehlt.")
+                elif not preview_confirmed:
+                    st.error("Kostenbestätigung für den Bildtest fehlt.")
+                else:
+                    try:
+                        with st.spinner("JEV prüft die Klassen anhand der Bilder …"):
+                            preview_result, preview_path = run_classification_preview(
+                                preview_images, preview_dataset.lower(), preview_labels, preview_model,
+                                openrouter_key, runs_root.parent / "jev_photo_checks", geometry=preview_geometry,
+                                sample_id=preview_sample, true_label=str(preview_row["label"]),
+                            )
+                        st.session_state["jev_preview_result"] = preview_result
+                        st.session_state["jev_preview_path"] = str(preview_path)
+                    except Exception as exc:
+                        st.error(f"JEV-Bildtest fehlgeschlagen: {type(exc).__name__}: {exc}")
+            if "jev_preview_result" in st.session_state:
+                saved_preview = st.session_state["jev_preview_result"]
+                st.caption(f"Zuletzt getestetes Objekt: {saved_preview['sample_id']} · {saved_preview['view_count']} Ansicht(en) · {saved_preview['dataset']}")
+                preview_metrics = st.columns(3)
+                preview_metrics[0].metric("Bildtest: Vorhersage", str(saved_preview["pred_label"]))
+                preview_metrics[1].metric("Bildtest: Ground Truth", str(saved_preview["true_label"]))
+                preview_usage = json.loads(str(saved_preview["usage_json"]))
+                preview_metrics[2].metric("Bildtest: Kosten [USD]", str(preview_usage.get("cost", "–")))
+                with st.expander("Bildtest: gespeicherte Anfrage und Rohantwort"):
+                    st.json(saved_preview)
+                st.caption(f"Bildtest gespeichert: {st.session_state['jev_preview_path']}")
+
 with experiment_tab:
     st.subheader("Experiment konfigurieren")
-    dataset_label = st.radio("Datensatz", ["ModelNet", "S3DIS"], horizontal=True)
+    dataset_label = st.radio("Datensatz", ["ModelNet", "S3DIS", "ModelNet + S3DIS (alle Runs)"], horizontal=True)
+    run_both = dataset_label == "ModelNet + S3DIS (alle Runs)"
     config_col1, config_col2 = st.columns(2)
-    run_name = config_col1.text_input("Laufname", f"{dataset_label.lower()}-paper-v2")
+    run_name = config_col1.text_input("Laufname", "alle-runs-paper-v2" if run_both else f"{dataset_label.lower()}-paper-v2")
     repeat_count = int(config_col2.number_input("Wiederholungen", min_value=1, max_value=10, value=1))
     api_col1, api_col2 = st.columns(2)
     max_retries = int(api_col1.number_input("Wiederholungen bei API-Fehlern", min_value=0, max_value=8, value=2))
     request_delay = float(api_col2.number_input("Pause zwischen Requests [s]", min_value=0.0, max_value=30.0, value=0.0, step=0.25))
     targets = configured_targets()
 
-    selected_records = pd.DataFrame()
-    spec = None
-    if dataset_label == "ModelNet":
+    experiments: list[tuple[pd.DataFrame, ExperimentSpec]] = []
+    configuration_errors: list[str] = []
+    if dataset_label == "ModelNet" or run_both:
         try:
             full_manifest = cached_modelnet(str(modelnet_path))
-            view_counts = st.multiselect("Anzahl Ansichten", [1, 2, 3, 4], default=[1, 2, 3, 4])
+            view_counts = [1, 2, 3, 4] if run_both else st.multiselect("Anzahl Ansichten", [1, 2, 3, 4], default=[1, 2, 3, 4])
+            selected_records = pd.DataFrame()
             if view_counts:
                 selected_records = select_paired_modelnet(full_manifest, view_counts)
             st.caption("Es werden alle gemeinsamen ModelNet-Testobjekte der gewählten Ansichtszahlen klassifiziert.")
@@ -369,28 +497,32 @@ with experiment_tab:
                 repeat_count=repeat_count,
                 max_retries=max_retries,
                 request_delay_s=request_delay,
-                run_name=run_name,
+                run_name=f"{run_name}-modelnet" if run_both else run_name,
             )
+            experiments.append((selected_records, spec))
         except Exception as exc:
+            configuration_errors.append(f"ModelNet: {exc}")
             st.error(str(exc))
-    else:
+    if dataset_label == "S3DIS" or run_both:
         manifest_path = prepared_root / "s3dis_manifest.csv"
         prepared = prepared_frame(manifest_path)
         if prepared.empty:
             st.warning("Zuerst im Reiter „S3DIS vorbereiten“ RGB-Ansichten erzeugen.")
+            configuration_errors.append("Vorbereitete S3DIS-Ansichten fehlen.")
         else:
             prepared = prepared[prepared["status"] == "ok"].copy()
             available_areas = sorted(prepared["area"].astype(str).unique()) if "area" in prepared else []
             selected_area = st.selectbox(
                 "S3DIS Area",
                 ["Alle Areas", *available_areas],
+                index=1 + available_areas.index("Area_5") if run_both and "Area_5" in available_areas else 0,
                 help="Begrenzt den Test auf alle Instanzen einer einzelnen S3DIS-Area.",
             )
             if selected_area != "Alle Areas":
                 prepared = select_s3dis_area(prepared, selected_area)
             else:
                 prepared = select_s3dis_area(prepared, "all")
-            condition_labels = st.multiselect(
+            condition_labels = ["RGB ohne Geometrie", "RGB + AABB-Geometrie"] if run_both else st.multiselect(
                 "Ablationsbedingungen",
                 ["RGB ohne Geometrie", "RGB + AABB-Geometrie"],
                 default=["RGB ohne Geometrie", "RGB + AABB-Geometrie"],
@@ -416,16 +548,25 @@ with experiment_tab:
                 repeat_count=repeat_count,
                 max_retries=max_retries,
                 request_delay_s=request_delay,
-                run_name=run_name,
+                run_name=f"{run_name}-s3dis" if run_both else run_name,
             )
+            experiments.append((selected_records, spec))
 
-    if spec is not None:
-        requests = planned_request_count(selected_records, spec, targets) if targets and not selected_records.empty else 0
+    if experiments:
+        requests = sum(planned_request_count(records, spec, targets) for records, spec in experiments if not records.empty)
         summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
-        summary_col1.metric("Objekte", f"{selected_records['sample_id'].nunique():,}" if not selected_records.empty else "0")
-        summary_col2.metric("Klassen", f"{selected_records['label'].nunique():,}" if not selected_records.empty else "0")
+        summary_col1.metric("Objekte", f"{sum(records['sample_id'].nunique() for records, _ in experiments if not records.empty):,}")
+        summary_col2.metric("Klassen", f"{sum(records['label'].nunique() for records, _ in experiments if not records.empty):,}")
         summary_col3.metric("Modellziele", len(targets))
         summary_col4.metric("Geplante Requests", f"{requests:,}")
+        if run_both:
+            st.info("Ein Start führt alle vier ModelNet-Ansichtszahlen und beide S3DIS-Bedingungen nacheinander aus. Jeder Datensatz erhält einen eigenen Ergebnisordner.")
+            st.dataframe(pd.DataFrame([
+                {"Datensatz": spec.dataset, "Umfang": spec.area_scope,
+                 "Objekte": records["sample_id"].nunique(),
+                 "Requests": planned_request_count(records, spec, targets)}
+                for records, spec in experiments if not records.empty
+            ]), hide_index=True, use_container_width=True)
         if targets:
             st.dataframe(pd.DataFrame([target.public() for target in targets]), hide_index=True, use_container_width=True)
         paid_targets = [target for target in targets if target.provider != "mock"]
@@ -441,16 +582,22 @@ with experiment_tab:
             disabled=not insecure_litellm_targets,
         )
 
-        if st.button("Experiment starten", type="primary"):
-            problems: list[str] = []
-            if selected_records.empty:
-                problems.append("Keine Samples ausgewählt.")
+        if st.button("Alle Runs starten" if run_both else "Experiment starten", type="primary"):
+            problems = list(configuration_errors)
+            if any(records.empty for records, _ in experiments):
+                problems.append("Keine Samples für mindestens einen Datensatz ausgewählt.")
+            if any(not spec.view_counts if spec.dataset == "modelnet" else not spec.conditions for _, spec in experiments):
+                problems.append("Keine Versuchsbedingungen ausgewählt.")
             if not targets:
                 problems.append("Kein Modell ausgewählt.")
             if paid_targets and not confirmed:
                 problems.append("Kostenbestätigung fehlt.")
             if any(target.provider == "gemini" and not target.api_key for target in targets):
                 problems.append("Gemini API-Key fehlt.")
+            if use_jev and not split_models(jev_models):
+                problems.append("JEV-Modell-ID fehlt.")
+            if any(target.provider in {"jev", "jev_photo_check"} and not target.api_key.strip() for target in targets):
+                problems.append("OpenRouter API-Key fehlt.")
             if any(target.provider == "litellm" and not target.api_key for target in targets):
                 problems.append("LiteLLM API-Key fehlt.")
             if any(target.provider == "litellm" and not target.base_url for target in targets):
@@ -461,13 +608,12 @@ with experiment_tab:
                 for problem in problems:
                     st.error(problem)
             else:
-                run_dir = create_run_directory(runs_root, spec, targets, selected_records)
-                st.session_state["last_run_dir"] = str(run_dir)
                 progress_bar = st.progress(0.0)
                 run_status = st.empty()
                 live_latest = st.empty()
                 live_table = st.empty()
                 live_rows: list[dict[str, object]] = []
+                completed_requests = 0
 
                 def run_progress(
                     done: int,
@@ -475,6 +621,8 @@ with experiment_tab:
                     message: str,
                     result: dict[str, object],
                 ) -> None:
+                    done = completed_requests + done
+                    total = requests
                     progress_bar.progress(done / total if total else 1.0)
                     run_status.caption(f"{done:,}/{total:,} · {message}")
                     status = str(result.get("status", "error"))
@@ -484,6 +632,7 @@ with experiment_tab:
                     live_row = {
                         "Nr.": done,
                         "Sample": str(result.get("sample_id", "")),
+                        "Datensatz": str(result.get("dataset", "")),
                         "Modell": f"{result.get('provider', '')} / {result.get('model', '')}",
                         "Antwort": answer,
                         "Ground Truth": str(result.get("true_label", "")),
@@ -491,6 +640,10 @@ with experiment_tab:
                         "Bedingung": str(result.get("condition", "")),
                         "Laufzeit [s]": result.get("latency_s", ""),
                     }
+                    if result.get("provider") == "jev_photo_check" and status == "ok":
+                        scores = photo_check_scores(str(result["raw_response"]))
+                        live_row["Photo Check: P(Ja)"] = scores[answer]
+                        live_row["Photo Check: prüfen"] = scores[answer] < jev_threshold or sum(value >= jev_threshold for value in scores.values()) > 1
                     live_rows.append(live_row)
                     latest_text = (
                         f"Antwort {done:,}/{total:,}: {live_row['Sample']} → {answer} "
@@ -509,19 +662,28 @@ with experiment_tab:
                         use_container_width=True,
                     )
 
-                with st.spinner("Experiment läuft; jedes Ergebnis wird sofort gespeichert …"):
-                    results, evaluated = run_experiment(selected_records, spec, targets, run_dir, progress=run_progress)
-                successes = int((results["status"] == "ok").sum())
-                errors = int((results["status"] != "ok").sum())
-                st.success(f"Lauf abgeschlossen: {successes:,} erfolgreiche Antworten, {errors:,} Fehler. Ergebnisse: {run_dir}")
-                if not evaluated["aggregate"].empty:
-                    st.dataframe(evaluated["aggregate"], hide_index=True, use_container_width=True)
+                for selected_records, spec in experiments:
+                    run_dir = create_run_directory(runs_root, spec, targets, selected_records)
+                    st.session_state["last_run_dir"] = str(run_dir)
+                    try:
+                        with st.spinner(f"{spec.dataset}: Experiment läuft; jedes Ergebnis wird sofort gespeichert …"):
+                            results, evaluated = run_experiment(selected_records, spec, targets, run_dir, progress=run_progress)
+                    except Exception as exc:
+                        st.error(f"{spec.dataset}: Lauf abgebrochen: {type(exc).__name__}: {exc}. Bereits gespeicherte Ergebnisse: {run_dir}")
+                    else:
+                        successes = int((results["status"] == "ok").sum())
+                        errors = int((results["status"] != "ok").sum())
+                        st.success(f"{spec.dataset}: {successes:,} erfolgreiche Antworten, {errors:,} Fehler. Ergebnisse: {run_dir}")
+                        if not evaluated["aggregate"].empty:
+                            st.dataframe(evaluated["aggregate"], hide_index=True, use_container_width=True)
+                    completed_requests += planned_request_count(selected_records, spec, targets)
 
 with results_tab:
     st.subheader("Gespeicherte Läufe")
+    st.caption("Grafiken und Datenexporte findest du im Reiter Auswertungen.")
     with st.expander("Alte ModelNet-Ergebnisse einheitlich importieren", expanded=False):
         st.write(
-            "Erzeugt einen unveränderten ModelNet40-Auditlauf und einen Paper-Vergleich mit exakt denselben "
+            "Erzeugt einen unveränderten ModelNet40-Auditlauf und einen Vergleich mit exakt denselben "
             "1.860 Objekt-IDs und 33 Klassen wie die aktuellen ModelNet-Daten."
         )
         try:
@@ -539,18 +701,18 @@ with results_tab:
                 st.rerun()
         except (LegacyResultError, OSError, ValueError, pd.errors.ParserError) as exc:
             st.warning(str(exc))
-    with st.expander("Einheitliches Paper-Exportpaket", expanded=False):
+    with st.expander("Ergebnisdaten exportieren", expanded=False):
         st.write(
             "Fasst aktuelle Läufe und den exakt angeglichenen 33-Klassen-Altvergleich zusammen. "
             "Unvollständige Läufe werden separat ausgewiesen."
         )
-        if st.button("Paper-CSV-Paket aktualisieren"):
+        if st.button("Ergebnisdaten aktualisieren"):
             paper_export = build_paper_export(runs_root, DEFAULT_PAPER_EXPORT)
-            st.success(f"Paper-Export aktualisiert: {paper_export.output_dir}")
+            st.success(f"Ergebnisexport aktualisiert: {paper_export.output_dir}")
         paper_zip = DEFAULT_PAPER_EXPORT / "MMFM_Paper_Results_CSV.zip"
         if paper_zip.exists():
             st.download_button(
-                "Paper-Ergebnisse als ZIP herunterladen",
+                "Ergebnisse als ZIP herunterladen",
                 data=paper_zip.read_bytes(),
                 file_name=paper_zip.name,
                 mime="application/zip",
@@ -558,7 +720,7 @@ with results_tab:
         paper_workbook = DEFAULT_PAPER_EXPORT / "MMFM_Paper_Results.xlsx"
         if paper_workbook.exists():
             st.download_button(
-                "Paper-Ergebnisse als Excel herunterladen",
+                "Ergebnisse als Excel herunterladen",
                 data=paper_workbook.read_bytes(),
                 file_name=paper_workbook.name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -568,10 +730,11 @@ with results_tab:
         key=lambda path: path.name,
         reverse=True,
     ) if runs_root.exists() else []
+    render_confusion_explorer(run_dirs, DEFAULT_HISTORICAL_CSV, runs_root.parent / "historical_overview" / "original_pilot")
     if not run_dirs:
-        st.info("Noch keine Experimentergebnisse vorhanden.")
+        st.info("Noch keine gespeicherten Experimentläufe. Historische CSV-Dateien lassen sich im Matrix-Explorer oben auswählen.")
     else:
-        with st.expander("Combine runs: compare legacy and current models", expanded=True):
+        with st.expander("Combine runs: compare legacy and current models", expanded=False):
             comparable_run_dirs = [path for path in run_dirs if run_scope(path) != "modelnet40_legacy_full"]
             run_labels = {
                 path: f"{PROTOCOL_LABELS.get(run_scope(path), run_scope(path))} · {path.name}"
@@ -742,7 +905,7 @@ with results_tab:
                         chart_config = {
                             "displaylogo": False,
                             "toImageButtonOptions": {
-                                "format": "png",
+                                "format": st.session_state.get("cm_export_format", "svg"),
                                 "filename": "modelnet_legacy_current_views_1_to_4",
                                 "scale": 2,
                             },
@@ -782,11 +945,9 @@ with results_tab:
                             sorted(comparison_rows["model"].astype(str).unique()),
                             key="merged_confusion_model",
                         )
-                        normalize_confusion = confusion_col2.checkbox(
-                            "Row-normalized values",
-                            value=True,
-                            key="merged_confusion_normalized",
-                        )
+                        matrix_shared = st.session_state.get("confusion_display_settings", {}).get("modelnet")
+                        normalize_confusion = matrix_shared[0].normalize if matrix_shared else True
+                        confusion_col2.caption("Gemeinsame Matrixfilter oben einstellen. Die Referenz gilt auch für diese Alt-/Neu-Grafik.")
                         selected_scopes = comparison_rows.loc[
                             comparison_rows["model"].astype(str).eq(selected_confusion_model),
                             "protocol_scope",
@@ -799,14 +960,14 @@ with results_tab:
                             confusion_results,
                             model=selected_confusion_model,
                             normalize=normalize_confusion,
+                            settings=matrix_shared[0] if matrix_shared else None,
+                            reference=matrix_shared[1] if matrix_shared else None,
                         )
                         confusion_chart_config = {
                             "displaylogo": False,
                             "toImageButtonOptions": {
-                                "format": "png",
+                                "format": st.session_state.get("cm_export_format", "svg"),
                                 "filename": f"{selected_confusion_model}_confusion_matrices_views_1_to_4",
-                                "width": 2800,
-                                "height": 900,
                                 "scale": 2,
                             },
                         }
@@ -922,7 +1083,7 @@ with results_tab:
             single_chart_config = {
                 "displaylogo": False,
                 "toImageButtonOptions": {
-                    "format": "png",
+                    "format": st.session_state.get("cm_export_format", "svg"),
                     "filename": f"{selected_run.name}_{metric}",
                     "scale": 2,
                 },
@@ -950,23 +1111,21 @@ with results_tab:
                 "Model for single-run confusion matrices",
                 single_confusion_models,
             )
-            single_confusion_normalized = single_confusion_col2.checkbox(
-                "Row-normalized values",
-                value=True,
-                key="single_confusion_normalized",
-            )
+            matrix_shared = st.session_state.get("confusion_display_settings", {}).get("modelnet")
+            single_confusion_normalized = matrix_shared[0].normalize if matrix_shared else True
+            single_confusion_col2.caption("Gleiche Darstellung wie im gemeinsamen Matrix-Explorer; gilt auch für importierte Altresultate.")
             single_confusion_figure = confusion_matrix_grid(
                 single_modelnet_results,
                 model=selected_single_confusion_model,
                 normalize=single_confusion_normalized,
+                settings=matrix_shared[0] if matrix_shared else None,
+                reference=matrix_shared[1] if matrix_shared else None,
             )
             single_confusion_config = {
                 "displaylogo": False,
                 "toImageButtonOptions": {
-                    "format": "png",
+                    "format": st.session_state.get("cm_export_format", "svg"),
                     "filename": f"{selected_single_confusion_model}_single_run_confusion_views_1_to_4",
-                    "width": 2800,
-                    "height": 900,
                     "scale": 2,
                 },
             }
@@ -1110,6 +1269,7 @@ with results_tab:
                         st.warning("Die für dieses Ergebnis gespeicherten Bilddateien wurden nicht gefunden.")
                     if str(detail.get("error", "")):
                         st.error(str(detail["error"]))
+                    show_photo_check(detail, jev_threshold, "result-photo-check-csv")
 
         errors = raw_results[raw_results["status"] != "ok"] if not raw_results.empty else pd.DataFrame()
         if not errors.empty:
@@ -1117,6 +1277,10 @@ with results_tab:
                 st.dataframe(errors[["sample_id", "provider", "model", "condition", "error"]], hide_index=True, use_container_width=True)
 
         download_col1, download_col2 = st.columns(2)
+        photo_checks_path = selected_run / "photo_checks.csv"
+        if photo_checks_path.exists():
+            st.download_button("Alle Photo-Check-Werte als CSV", photo_checks_path.read_bytes(),
+                               file_name=f"{selected_run.name}_photo_checks.csv", mime="text/csv")
         download_col1.download_button(
             "Rohdaten als CSV",
             data=results_path.read_bytes(),
@@ -1130,3 +1294,15 @@ with results_tab:
                 file_name=f"{selected_run.name}_summary.csv",
                 mime="text/csv",
             )
+
+
+with publication_tab:
+    st.subheader("Auswertungen")
+    st.write("ModelNet-Detailmatrizen, vollständige Matrizen, S3DIS-Klassenvergleich und gepaarte AABB-Wechsel, "
+             "Jev-Wahrscheinlichkeiten sowie die Pilot-Abbildung aus gespeicherten Ergebnissen erstellen.")
+    render_publication_export(
+        runs_root,
+        DEFAULT_PAPER_EXPORT.parent / "auswertungen",
+        reference_figures=find_paper_reference_figures(PROJECT_DIR),
+        historical_csv_root=DEFAULT_HISTORICAL_CSV,
+    )
