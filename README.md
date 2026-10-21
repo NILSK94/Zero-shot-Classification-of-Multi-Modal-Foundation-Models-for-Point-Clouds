@@ -30,17 +30,6 @@ Choose dataset folders and models in the sidebar. Enter credentials there or set
 - **Results:** inspect saved runs, automatic summaries, historical results and the optional matrix explorer.
 - **Evaluations:** generate and download figures and data from saved results, without new model requests.
 
-## Evaluation exports
-
-Select the results folder, repetition and output folder, then click **Generate evaluations**. The application creates ModelNet and S3DIS overviews, complete and focused confusion matrices, Jev probability diagnostics and, optionally, the historical pilot overview.
-
-For S3DIS, the class comparison shows the percentage of correctly classified objects in each class for RGB and RGB+AABB. The paired-change figure separates incorrect-to-correct and correct-to-incorrect decisions. Objects are matched by ID and ground-truth class. Each percentage uses all objects in that true class as denominator. All four correctness states and class sample counts are included in the exported data.
-
-Individual PNGs and PDFs keep their existing filenames for compatibility. PNGs use 600 dpi. `MMFM_Evaluations.zip` contains figures, data and provenance, without manuscript instructions or LaTeX files. Previously saved evaluation packages remain readable.
-
-Datasets, repetitions and historical/current protocols are evaluated separately. Missing conditions are not fabricated. Invalid responses count as incorrect for accuracy. Class probabilities are analysed separately from final classification decisions. Rounded probability vectors are retained without renormalisation; independent historical yes/no scores are not treated as class distributions. Paired changes describe the selected runs and do not establish variability across repeated runs.
-
-The versioned `mmfm_tool/paper_figure_profile.json` is required for reproducible figure generation. Its existing filename is retained for compatibility. The optional historical pilot export explicitly identifies the original Stable Diffusion caption-matching evaluation.
 
 ## Local data and settings
 
