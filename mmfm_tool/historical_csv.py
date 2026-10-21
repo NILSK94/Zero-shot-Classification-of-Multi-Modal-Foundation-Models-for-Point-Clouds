@@ -23,7 +23,7 @@ def load_historical_csvs(root: str | Path, *, original_rows: bool = False) -> tu
         source_column = "image" if "image" in frame else "object" if "object" in frame else None
         if prediction_column is None or source_column is None:
             audit.append({"file": path.name, "state": "not reconstructable",
-                          "note": "Keine eindeutige Klassen-Vorhersage mit Objekt-ID vorhanden; Captions werden nicht anhand der Ground Truth umgedeutet."})
+                          "note": 'No unambiguous class prediction with an object ID is available; captions are not converted using ground truth.'})
             continue
         lower_name = path.name.casefold()
         indoor = "colored-cloud" in lower_name or "feature-geometries" in lower_name
@@ -54,7 +54,7 @@ def load_historical_csvs(root: str | Path, *, original_rows: bool = False) -> tu
                 observations[-1]["true_label"] = str(source[source_column]).split("_")[0].lower()
         normalized = pd.DataFrame(observations)
         if normalized.empty:
-            audit.append({"file": path.name, "state": "not reconstructable", "note": "Keine eindeutigen Objekt-IDs erkannt."})
+            audit.append({"file": path.name, "state": "not reconstructable", "note": 'No unambiguous object IDs detected.'})
             continue
         # Preserve the historical output labels verbatim after whitespace/case normalization.
         # Several view rows are one object decision only when their labels agree.
@@ -71,7 +71,7 @@ def load_historical_csvs(root: str | Path, *, original_rows: bool = False) -> tu
                              "truth_source": "original notebook: image.split('_')[0]", "error": ""})
             audit.append({"file": path.name, "state": "loaded", "source_rows": len(frame),
                           "objects": normalized["sample_id"].nunique(), "dataset": dataset,
-                          "note": "Originalskript: jede CSV-Zeile zählt; Klassenextraktion am ersten Unterstrich."})
+                          "note": 'Original script: every CSV row counts; the class is extracted at the first underscore.'})
             continue
         for (sample_id, truth), group in normalized.groupby(["sample_id", "true_label"], sort=True):
             predictions = group["candidate"].unique()
@@ -86,10 +86,10 @@ def load_historical_csvs(root: str | Path, *, original_rows: bool = False) -> tu
                          "task_id": hashlib.sha256(f"{path.name}|{sample_id}".encode()).hexdigest(),
                          "historical_source_rows": ",".join(map(str, group["source_row"])),
                          "historical_row_count": len(group), "truth_source": "object filename",
-                         "error": "Widersprüchliche oder leere Objektantworten; keine Mehrheitsentscheidung erfunden." if not valid else ""})
+                         "error": 'Conflicting or empty object responses; no majority-vote prediction is invented.' if not valid else ""})
         audit.append({"file": path.name, "state": "loaded", "source_rows": len(frame),
                       "objects": normalized["sample_id"].nunique(), "ambiguous_objects": ambiguous,
-                      "dataset": dataset, "note": "Objektebene; historische Protokolle bleiben separat. Klassen aus Objektbezeichnungen abgeleitet."})
+                      "dataset": dataset, "note": 'Object-level decisions; historical protocols remain separate. Classes are derived from object names.'})
     result = pd.DataFrame(rows)
     result.attrs["counting"] = "original_csv_rows" if original_rows else "object_decisions"
     return result, pd.DataFrame(audit)

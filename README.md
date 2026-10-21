@@ -1,52 +1,49 @@
 # Multimodal Point Cloud Classifier
 
-MMFM Lab erzeugt isometrische Punktwolkenansichten, klassifiziert Objekte mit multimodalen Modellen und wertet gespeicherte Ergebnisse aus.
+MMFM Lab renders isometric point cloud views, classifies objects with multimodal models, and evaluates saved results.
 
-## Starten
+## Getting started
 
-Python 3.12 verwenden. Unter Windows `START_TOOL.bat` starten. Alternativ:
+Use Python 3.12. On Windows, run `START_TOOL.bat` to set up the environment and start the application.
+
+For a manual installation, create a virtual environment:
 
 ```sh
 python -m venv .venv
+```
+
+Activate it with `.venv\Scripts\activate` on Windows or `source .venv/bin/activate` on Linux/macOS, then run:
+
+```sh
 python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-Für die Installation unter Windows die virtuelle Umgebung zuerst mit `.venv\Scripts\activate` aktivieren; unter Linux/macOS mit `source .venv/bin/activate`. Der Windows-Starter übernimmt Einrichtung und Start automatisch.
+## Interface
 
-## Bedienung
+Choose dataset folders and models in the sidebar. Enter credentials there or set the environment variables listed in `.env.example`. The optional mock mode checks the pipeline without model requests.
 
-In der Seitenleiste die Datenordner und gewünschten Modelle auswählen. Zugangsdaten können dort eingegeben oder über die Variablen aus `.env.example` gesetzt werden. Der Mock-Modus prüft den Ablauf ohne Modellanfragen.
+- **Overview:** inspect available objects, classes and experimental configurations.
+- **Prepare S3DIS:** generate views from the point clouds.
+- **JEV image test:** inspect a request and its criteria, then classify one object using one or two views after confirming the API charges.
+- **Experiments:** run ModelNet with one to four views and S3DIS with RGB or RGB+AABB. Each response is saved immediately.
+- **Results:** inspect saved runs, automatic summaries, historical results and the optional matrix explorer.
+- **Evaluations:** generate and download figures and data from saved results, without new model requests.
 
-- **Übersicht:** verfügbare Objekte, Klassen und Versuchsbedingungen prüfen.
-- **S3DIS vorbereiten:** Ansichten aus den Punktwolken erstellen.
-- **JEV Bildtest:** ein Objekt mit einer oder zwei Ansichten testen; Anfrage und Kriterien vor dem kostenpflichtigen Aufruf prüfen.
-- **Experimente:** ModelNet mit einer bis vier Ansichten und S3DIS mit RGB bzw. RGB+AABB ausführen. Jede Antwort wird sofort gespeichert.
-- **Ergebnisse:** gespeicherte Läufe, automatische Zusammenfassungen, historische Ergebnisse und den optionalen Matrix-Explorer ansehen.
-- **Auswertungen:** Grafiken und Daten aus gespeicherten Ergebnissen erzeugen und herunterladen. Dabei entstehen keine neuen Modellanfragen.
+## Evaluation exports
 
-## Auswertungen
+Select the results folder, repetition and output folder, then click **Generate evaluations**. The application creates ModelNet and S3DIS overviews, complete and focused confusion matrices, Jev probability diagnostics and, optionally, the historical pilot overview.
 
-Ergebnisordner, Wiederholung und Ausgabeordner auswählen und **Auswertungen erzeugen** anklicken. ModelNet- und S3DIS-Übersichten, vollständige und fokussierte Konfusionsmatrizen, Jev-Wahrscheinlichkeiten und optional die historische Pilot-Auswertung werden automatisch erstellt.
+For S3DIS, the class comparison shows the percentage of correctly classified objects in each class for RGB and RGB+AABB. The paired-change figure separates incorrect-to-correct and correct-to-incorrect decisions. Objects are matched by ID and ground-truth class. Each percentage uses all objects in that true class as denominator. All four correctness states and class sample counts are included in the exported data.
 
-Für S3DIS entstehen zusätzlich `S3DIS_Klassenvergleich_RGB_RGB_AABB.png` und `S3DIS_AABB_gepaarte_Klassifikationswechsel.png`. Der Klassenvergleich zeigt die richtig klassifizierten Objekte je Klasse für beide Eingaben. Die Wechselgrafik trennt falsch → richtig und richtig → falsch. Die Paarung erfolgt über Objekt-ID und Ground Truth. Jeder Prozentwert verwendet alle Objekte der entsprechenden wahren Klasse als Nenner. Alle vier Richtigkeitszustände und die Klassengrößen stehen in den exportierten Daten.
+Individual PNGs and PDFs keep their existing filenames for compatibility. PNGs use 600 dpi. `MMFM_Evaluations.zip` contains figures, data and provenance, without manuscript instructions or LaTeX files. Previously saved evaluation packages remain readable.
 
-Die Oberfläche bietet einzelne PNGs und PDFs unter gleichbleibenden Dateinamen an. PNGs werden mit 600 dpi erzeugt. `MMFM_Auswertungen.zip` enthält ausschließlich Grafiken, Daten und die Herkunftsinformationen; keine Manuskriptanleitungen oder LaTeX-Dateien.
+Datasets, repetitions and historical/current protocols are evaluated separately. Missing conditions are not fabricated. Invalid responses count as incorrect for accuracy. Class probabilities are analysed separately from final classification decisions. Rounded probability vectors are retained without renormalisation; independent historical yes/no scores are not treated as class distributions. Paired changes describe the selected runs and do not establish variability across repeated runs.
 
-ModelNet und S3DIS sowie historische und aktuelle Versuchsprotokolle bleiben getrennt. Fehlende Bedingungen werden nicht ergänzt; ungültige Antworten zählen für Accuracy als falsch. Wiederholungen werden getrennt ausgewertet. Klassenwahrscheinlichkeiten werden unabhängig von den endgültigen Klassifikationsentscheidungen betrachtet. Gerundete Wahrscheinlichkeitsvektoren bleiben unverändert; historische unabhängige Ja/Nein-Scores werden nicht als Klassenverteilung interpretiert. Die gepaarten Wechsel beschreiben die ausgewählten Läufe und belegen allein keine Streuung über Wiederholungen.
+The versioned `mmfm_tool/paper_figure_profile.json` is required for reproducible figure generation. Its existing filename is retained for compatibility. The optional historical pilot export explicitly identifies the original Stable Diffusion caption-matching evaluation.
 
-Das versionierte `mmfm_tool/paper_figure_profile.json` ist Bestandteil des Programms und wird für die reproduzierbare Grafikerzeugung benötigt. Der Dateiname bleibt für bestehende Exporte kompatibel. Die optionale Pilot-Auswertung liest die historischen CSV-Dateien; die damalige Stable-Diffusion-Caption-Prüfung ist ausdrücklich als solche gekennzeichnet.
+## Local data and settings
 
-## Daten und lokale Einstellungen
+Datasets and results are not included in the source repository. The ignored `data_paths.local.json` can store local paths for `modelnet`, `s3dis`, `prepared`, `runs`, `legacy_results`, `historical_csv` and `paper_export`. Environment variables from `.env.example` take precedence. Evaluation does not modify source datasets.
 
-Datensätze und Ergebnisse sind nicht im Quellcode enthalten. Die ignorierte `data_paths.local.json` kann lokale Pfade für `modelnet`, `s3dis`, `prepared`, `runs`, `legacy_results`, `historical_csv` und `paper_export` speichern. Umgebungsvariablen aus `.env.example` haben Vorrang. Datenquellen werden durch Auswertungen nicht verändert.
-
-`.gitignore` lässt Programmdateien, benötigte Konfigurationen, Tests und Startdateien zu. Datensätze, Ergebnisse, erzeugte Grafiken, Sicherungen, lokale Pfade, virtuelle Umgebungen, Zugangsdaten und private Dokumente bleiben ausgeschlossen.
-
-## Tests
-
-```sh
-python -m unittest discover -s tests -v
-```
-
-Tests für das optionale historische Archiv werden übersprungen, wenn es lokal nicht vorliegt. Die Tests verwenden keine kostenpflichtigen Modellanfragen.
+`.gitignore` includes application source, required configuration and launch scripts. Local datasets, results, generated graphics, backups, machine-specific paths, virtual environments, credentials, private documents and development tests are excluded from publication.

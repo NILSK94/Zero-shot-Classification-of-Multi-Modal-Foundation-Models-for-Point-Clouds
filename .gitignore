@@ -19,6 +19,5 @@
 mmfm_tool/*
 !mmfm_tool/*.py
 !mmfm_tool/paper_figure_profile.json
-!tests/
-tests/*
-!tests/*.py
+# Development checks stay local.
+tests/

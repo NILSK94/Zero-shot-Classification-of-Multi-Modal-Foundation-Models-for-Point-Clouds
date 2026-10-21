@@ -37,7 +37,7 @@ def validate_label(value: str, labels: Sequence[str]) -> str:
     allowed = {label.casefold(): label for label in labels}
     if candidate.casefold() not in allowed or any(character.isspace() for character in candidate):
         raise ProviderError(
-            "Modellantwort muss ausschließlich aus genau einem erlaubten Klassennamen bestehen: "
+            "The model response must contain exactly one allowed class name: "
             f"{value!r}"
         )
     return allowed[candidate.casefold()]
@@ -65,7 +65,7 @@ def build_prompt(
             "The point colors are the original RGB measurements. Classify the instance using visual appearance and shape."
         )
     else:
-        raise ValueError(f"Unbekannter Datensatz: {dataset}")
+        raise ValueError(f"Unknown dataset: {dataset}")
 
     geometry_text = ""
     if geometry is not None:
@@ -153,13 +153,13 @@ class LiteLLMProvider(BaseProvider):
     def __init__(self, model: str, api_key: str = "", base_url: str = "") -> None:
         super().__init__(model, api_key, base_url)
         if not self.api_key:
-            raise ProviderError("LITELLM_API_KEY fehlt.")
+            raise ProviderError("LITELLM_API_KEY is missing.")
         if not self.base_url:
-            raise ProviderError("LiteLLM Base-URL fehlt.")
+            raise ProviderError('LiteLLM base URL is missing.')
         try:
             from openai import OpenAI
         except ImportError as exc:
-            raise ProviderError("Das Paket 'openai' ist nicht installiert.") from exc
+            raise ProviderError('The openai package is not installed.') from exc
         self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
 
     def classify(
@@ -197,7 +197,7 @@ class LiteLLMProvider(BaseProvider):
             status = getattr(response, "status", "unknown")
             incomplete = getattr(response, "incomplete_details", None)
             raise ProviderError(
-                "LiteLLM/Qwen lieferte keinen Klassennamen "
+                "LiteLLM/Qwen did not return a class name "
                 f"(Status: {status}, incomplete_details: {_usage_dict(incomplete)})."
             )
         label = validate_label(raw, labels)
@@ -215,11 +215,11 @@ class GeminiProvider(BaseProvider):
     def __init__(self, model: str, api_key: str = "") -> None:
         super().__init__(model, api_key)
         if not self.api_key:
-            raise ProviderError("GEMINI_API_KEY fehlt.")
+            raise ProviderError("GEMINI_API_KEY is missing.")
         try:
             from google import genai
         except ImportError as exc:
-            raise ProviderError("Das Paket 'google-genai' ist nicht installiert.") from exc
+            raise ProviderError('The google-genai package is not installed.') from exc
         self.client = genai.Client(api_key=self.api_key)
 
     def classify(
@@ -244,7 +244,7 @@ class GeminiProvider(BaseProvider):
         )
         raw = str(getattr(interaction, "output_text", "") or "")
         if not raw.strip():
-            raise ProviderError("Gemini lieferte keinen Klassennamen.")
+            raise ProviderError("Gemini did not return a class name.")
         label = validate_label(raw, labels)
         return ProviderResult(
             label=label,
@@ -263,9 +263,9 @@ class JevProvider(BaseProvider):
     def __init__(self, model: str, api_key: str = "") -> None:
         super().__init__(model, api_key)
         if not self.api_key:
-            raise ProviderError("OPENROUTER_API_KEY fehlt.")
+            raise ProviderError("OPENROUTER_API_KEY is missing.")
         if not self.model:
-            raise ProviderError("JEV-Modell-ID fehlt.")
+            raise ProviderError('JEV model ID is missing.')
 
     def build_prompt(
         self,
@@ -289,7 +289,7 @@ class JevProvider(BaseProvider):
     def parse_answer(self, data: dict[str, Any], labels: Sequence[str]) -> str:
         answer = data["answers"]["classification"]
         if answer["type"] != "choice" or not isinstance(answer["choice"], str):
-            raise ValueError("Choice-Antwort fehlt")
+            raise ValueError('Choice response is missing')
         return validate_label(answer["choice"], labels)
 
     def classify(
@@ -301,21 +301,21 @@ class JevProvider(BaseProvider):
         from PIL import Image
 
         if not image_paths or not labels:
-            raise ProviderError("JEV benötigt Bilder und eine geschlossene Klassenliste.")
+            raise ProviderError('JEV requires images and a closed class list.')
         state: list[Any] = []
         for index, path in enumerate(image_paths, start=1):
             with Image.open(path) as image:
                 width, height = image.size
                 if image.format not in {"PNG", "JPEG"} or getattr(image, "is_animated", False):
-                    raise ProviderError("JEV unterstützt nur statische PNG- und JPEG-Bilder.")
+                    raise ProviderError('JEV supports static PNG and JPEG images only.')
                 mime = "image/png" if image.format == "PNG" else "image/jpeg"
             if not (280 <= width <= 1568 and 280 <= height <= 1568):
                 raise ProviderError(
-                    f"JEV-Bildgröße unzulässig: {width} × {height}. Erforderlich: 280–1568 Pixel "
-                    "je Seite und mindestens 78.400 Pixel insgesamt. Ansichten passend vorbereiten."
+                    f"Invalid JEV image dimensions: {width} × {height}. Required: 280–1568 pixels "
+                    "per side and at least 78,400 pixels in total. Prepare views at a supported size."
                 )
             if path.stat().st_size > 16 * 1024 * 1024:
-                raise ProviderError("Ein JEV-Bild darf höchstens 16 MiB groß sein.")
+                raise ProviderError('A JEV image must not exceed 16 MiB.')
             state.extend([
                 f"View {index} of the same point-cloud object:",
                 {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{_encode_image(path)}"}},
@@ -327,7 +327,7 @@ class JevProvider(BaseProvider):
         }
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         if len(body) > 32 * 1024 * 1024:
-            raise ProviderError("Die JEV-Anfrage überschreitet das Limit von 32 MiB.")
+            raise ProviderError('The JEV request exceeds the 32 MiB limit.')
         request = Request(
             self.endpoint,
             data=body,
@@ -338,21 +338,21 @@ class JevProvider(BaseProvider):
             with urlopen(request, timeout=120) as response:
                 raw = response.read().decode("utf-8")
         except HTTPError as exc:
-            hints = {401: "API-Key prüfen", 402: "OpenRouter-Guthaben prüfen", 429: "Rate-Limit erreicht"}
+            hints = {401: 'Check the API key', 402: 'Check the OpenRouter balance', 429: 'Rate limit reached'}
             raise ProviderError(
-                f"JEV/OpenRouter HTTP {exc.code}: {hints.get(exc.code, 'Anfrage fehlgeschlagen')}."
+                f"JEV/OpenRouter HTTP {exc.code}: {hints.get(exc.code, 'Request failed')}."
             ) from exc
         except (URLError, TimeoutError) as exc:
-            raise ProviderError("JEV/OpenRouter ist nicht erreichbar oder die Anfrage dauerte zu lange.") from exc
+            raise ProviderError('JEV/OpenRouter is unavailable or the request timed out.') from exc
         try:
             data = json.loads(raw)
             label = self.parse_answer(data, labels)
             usage = data["usage"]
             model_version = data["model"]
             if not isinstance(usage, dict) or not isinstance(model_version, str) or not model_version:
-                raise ValueError("Modellversion oder Usage fehlt")
+                raise ValueError("Model version or usage information is missing")
         except (ValueError, KeyError, TypeError) as exc:
-            raise ProviderError("JEV/OpenRouter lieferte keine gültige Decisions-Antwort.") from exc
+            raise ProviderError('JEV/OpenRouter returned an invalid Decisions response.') from exc
         return ProviderResult(label=label, raw_response=raw, model_version=model_version, usage=usage)
 
 
@@ -361,15 +361,15 @@ def photo_check_scores(raw_response: str) -> dict[str, float]:
     data = json.loads(raw_response)
     answers = data["answers"]
     if not isinstance(answers, dict) or not answers:
-        raise ValueError("Photo-Check-Antworten fehlen")
+        raise ValueError("Photo Check responses are missing")
     scores: dict[str, float] = {}
     for key, answer in answers.items():
         if not key.startswith("class_") or not key[6:] or not isinstance(answer, dict):
-            raise ValueError("Ungültige Photo-Check-Klasse")
+            raise ValueError('Invalid Photo Check class')
         value = answer.get("noul")
         if (answer.get("type") != "noul" or isinstance(value, bool)
                 or not isinstance(value, (float, int)) or not math.isfinite(value) or not 0 <= value <= 1):
-            raise ValueError("Ungültige Ja-Wahrscheinlichkeit")
+            raise ValueError('Invalid yes probability')
         scores[key[6:]] = float(value)
     return scores
 
@@ -408,7 +408,7 @@ class JevPhotoCheckProvider(JevProvider):
     def parse_answer(self, data: dict[str, Any], labels: Sequence[str]) -> str:
         scores = photo_check_scores(json.dumps(data))
         if set(scores) != set(labels):
-            raise ValueError("Photo-Check-Antworten stimmen nicht mit der Klassenliste überein")
+            raise ValueError('Photo Check responses do not match the class list')
         # Ties use alphabetical order, independent of ground truth and filenames.
         return max(sorted(scores), key=scores.__getitem__)
 
@@ -451,7 +451,7 @@ def create_provider(provider: str, model: str, api_key: str = "", base_url: str 
         return JevPhotoCheckProvider(model=model, api_key=api_key)
     if normalized == "mock":
         return MockProvider(model=model or "mock-v1")
-    raise ProviderError(f"Unbekannter Provider: {provider}")
+    raise ProviderError(f"Unknown provider: {provider}")
 
 
 def prompt_fingerprint(prompt: str) -> str:

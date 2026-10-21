@@ -46,10 +46,10 @@ class PublicationExport:
 def load_profile(path: str | Path | None = None) -> dict:
     profile = json.loads(Path(path or PROFILE_PATH).read_text(encoding='utf-8'))
     if not isinstance(profile.get('models'), list) or not profile['models']:
-        raise ValueError('Das Grafikprofil enthält keine Modelle.')
+        raise ValueError('The figure profile contains no models.')
     stems = [m['stem'] for m in profile['models']]
     if len(stems) != len(set(stems)) or any(not re.fullmatch(r'[A-Za-z0-9]+', s) for s in stems):
-        raise ValueError('Die Grafiknamen im Profil müssen eindeutig und alphanumerisch sein.')
+        raise ValueError('Figure names in the profile must be unique and alphanumeric.')
     return profile
 
 
@@ -73,7 +73,7 @@ def load_publication_rows(runs_root: str | Path) -> tuple[pd.DataFrame, list[dic
         frame['_source_row'] = np.arange(len(frame))
         missing = (FIELDS-{'timestamp','task_id'})-set(frame.columns)
         if missing:
-            raise ValueError(f'{folder.name}: fehlende Spalten: {", ".join(sorted(missing))}')
+            raise ValueError(f'{folder.name}: missing columns: {", ".join(sorted(missing))}')
         frame['protocol_scope'] = scope
         frame['source_run'] = folder.name
         frame['timestamp'] = frame.get('timestamp', '')
@@ -90,14 +90,14 @@ def load_publication_rows(runs_root: str | Path) -> tuple[pd.DataFrame, list[dic
                           'results_sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
         frames.append(frame)
     if not frames:
-        raise ValueError('Keine gespeicherten Klassifikationsergebnisse für den Grafikexport gefunden.')
+        raise ValueError('No saved classification results found for figure export.')
     data = pd.concat(frames,ignore_index=True)
     data['_time'] = pd.to_datetime(data.timestamp,errors='coerce',utc=True)
     data = data.sort_values(['_valid','_time','source_run'],na_position='first')
     # Different truths for the same physical object are an input error, not a new sample.
     truth_key = ['protocol_scope','dataset','sample_id']
     if data.groupby(truth_key,dropna=False).true_label.nunique().gt(1).any():
-        raise ValueError('Widersprüchliche Ground-Truth-Labels für dieselben Objekt-IDs.')
+        raise ValueError('Conflicting ground-truth labels for the same object IDs.')
     data = data.drop_duplicates(KEY,keep='last').drop(columns='_time').reset_index(drop=True)
     return data,inventory
 
@@ -110,7 +110,7 @@ def _identity(data: pd.DataFrame, model: dict, dataset: str, repeat: int) -> pd.
 def select_panels(data: pd.DataFrame, profile: dict, repeat: int = 1) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     """Require exact object IDs, true classes, and conditions before comparing."""
     if repeat < 1:
-        raise ValueError('Die Wiederholung muss mindestens 1 sein.')
+        raise ValueError('The repetition must be at least 1.')
     selected, singles, s3dis, excluded = [], [], [], []
     reference_ids = reference_truth = None
     expected_objects = profile['modelnet_objects']
@@ -123,26 +123,26 @@ def select_panels(data: pd.DataFrame, profile: dict, repeat: int = 1) -> tuple[l
             ids = set(panel.sample_id)
             if len(panel)!=expected_objects or len(ids)!=expected_objects or panel.true_label.nunique()!=expected_classes:
                 excluded.append({'model':definition['model'],'condition':f'views_{view}',
-                                 'reason':'unvollständige oder abweichende Objekt-/Klassenbasis'})
+                                 'reason':'incomplete or mismatched object/class cohort'})
                 continue
             if panel['_valid'].mean() < profile.get('minimum_coverage',.95):
-                excluded.append({'model':definition['model'],'condition':f'views_{view}','reason':'zu wenige gültige Antworten'})
+                excluded.append({'model':definition['model'],'condition':f'views_{view}','reason':'too few valid responses'})
                 continue
             truth = panel.set_index('sample_id').true_label.to_dict()
             if reference_ids is None:
                 reference_ids,reference_truth = ids,truth
             if ids!=reference_ids or truth!=reference_truth:
-                excluded.append({'model':definition['model'],'condition':f'views_{view}','reason':'andere Objekt-IDs oder Ground Truth'})
+                excluded.append({'model':definition['model'],'condition':f'views_{view}','reason':'different object IDs or ground truth'})
                 continue
             panels[view] = panel
         if not panels:
             continue
         if min(definition['views']) not in panels or max(definition['views']) not in panels:
-            excluded.append({'model':definition['model'],'reason':'erste oder letzte Vergleichsbedingung fehlt; keine Detailmatrix erzeugt'})
+            excluded.append({'model':definition['model'],'reason':'first or last comparison condition is missing; no focused matrix generated'})
             continue
         selected.append({'definition':definition,'panels':panels})
     if not selected:
-        raise ValueError('Keine vollständige Modellserie auf der im Profil festgelegten gemeinsamen Objektbasis.')
+        raise ValueError('No complete model series on the shared object cohort defined in the profile.')
     for definition in profile.get('single_view_models',[]):
         series = _identity(data,definition,'modelnet',repeat)
         panel = series[series.condition.eq('views_1') & series.view_count.eq(1)]
@@ -166,7 +166,7 @@ def select_panels(data: pd.DataFrame, profile: dict, repeat: int = 1) -> tuple[l
         if len(panels)==2:
             s3dis.append({'definition':definition,'panels':panels})
         else:
-            excluded.append({'model':name,'dataset':'s3dis','reason':'kein vollständiger gepaarter RGB/AABB-Vergleich'})
+            excluded.append({'model':name,'dataset':'s3dis','reason':'no complete paired RGB/AABB comparison'})
     return selected,singles,s3dis,excluded
 
 
@@ -182,7 +182,7 @@ def panel_matrix(panel: pd.DataFrame, labels: list[str]) -> tuple[pd.DataFrame,p
     raw = pd.crosstab(panel.true_label,panel.prediction).reindex(index=labels,fill_value=0)
     support = panel.groupby('true_label').size().reindex(labels,fill_value=0)
     if support.eq(0).any():
-        raise ValueError('Eine Matrix enthält Klassen ohne getestete Objekte.')
+        raise ValueError('A matrix contains classes without evaluated objects.')
     square = raw.reindex(columns=labels,fill_value=0)
     assert int(np.trace(square.to_numpy()))==int(panel.is_correct.sum())
     return raw,support,square.div(support,axis=0)
@@ -192,11 +192,11 @@ def focus_matrices(panels: dict[int,pd.DataFrame], definition: dict, labels: lis
     first,last = min(panels),max(panels)
     selected = sorted(set(definition['gains']+definition['difficult']+definition.get('context',[])))
     if not set(selected).issubset(labels):
-        raise ValueError(f"{definition['title']}: Profilklassen fehlen in der Datenbasis.")
+        raise ValueError(f"{definition['title']}: Profile classes are missing from the data.")
     raw_first,support,shares_first = panel_matrix(panels[first],labels)
     raw_last,last_support,shares_last = panel_matrix(panels[last],labels)
     if not support.equals(last_support):
-        raise ValueError('Die Klassenunterstützung unterscheidet sich zwischen den Bedingungen.')
+        raise ValueError('Class sample counts differ between conditions.')
     candidates = raw_first.reindex(index=selected).sum().add(raw_last.reindex(index=selected).sum(),fill_value=0).drop(selected,errors='ignore')
     # Invalid responses belong to the final collection column, never a class column.
     candidates = candidates.drop('[No valid response]',errors='ignore')
@@ -503,17 +503,14 @@ def _render(root: Path, models: list[dict], singles: list[dict], s3dis: list[dic
             review.savefig(fig,bbox_inches='tight'); plt.close(fig)
 
 
-GUIDE = r'''# Auswertungen
-
-Im Reiter Auswertungen gespeicherte Ergebnisse auswählen und Grafiken sowie Daten exportieren. PNGs, PDFs, Zahlen und Herkunftsinformationen stehen im Auswertungspaket bereit. Lokale Daten, Sicherungen und Zugangsdaten gehören nicht in die Veröffentlichung.
-'''
+GUIDE = 'Open the Evaluations tab to export figures, data and provenance from saved results. Local datasets, backups and credentials must remain private.'
 
 
 def build_publication_export(runs_root: str | Path, output_root: str | Path, *, repeat: int = 1,
                              profile_path: str | Path | None = None, reference_figures: str | Path | None = None,
                              png_dpi: int = 600, historical_csv_root: str | Path | None = None) -> PublicationExport:
     if not 50<=png_dpi<=1200:
-        raise ValueError('PNG-Auflösung muss zwischen 50 und 1200 dpi liegen.')
+        raise ValueError('PNG resolution must lie between 50 and 1200 dpi.')
     profile=load_profile(profile_path)
     rows,inventory=load_publication_rows(runs_root)
     models,singles,s3dis,excluded=select_panels(rows,profile,repeat)
@@ -522,11 +519,11 @@ def build_publication_export(runs_root: str | Path, output_root: str | Path, *, 
         item['labels']=sorted(next(iter(item['panels'].values())).true_label.unique())
         item['focus']=focus_matrices(item['panels'],item['definition'],item['labels'])
         if not item['focus']['approved_gains_still_largest']:
-            selection_warnings.append(f"{item['definition']['title']}: Die festgelegten Verbesserungsklassen sind in diesen Daten nicht mehr alle die größten Verbesserungen.")
+            selection_warnings.append(f"{item['definition']['title']}: The fixed improvement classes no longer all show the largest gains in these data.")
     output=Path(output_root).expanduser().resolve()
     runs=Path(runs_root).expanduser().resolve()
     if output==runs or runs in output.parents:
-        raise ValueError('Der Grafikexport darf nicht innerhalb des Ergebnislauf-Ordners liegen.')
+        raise ValueError('The figure export must not be placed inside the results-run folder.')
     output.parent.mkdir(parents=True,exist_ok=True)
     # Stage an entire generation before replacing files so failed renders keep the last export usable.
     with tempfile.TemporaryDirectory(prefix='paper_figures_',dir=output.parent) as temporary:
@@ -564,7 +561,7 @@ def build_publication_export(runs_root: str | Path, output_root: str | Path, *, 
         references=[]
         if reference_figures:
             assets=Path(reference_figures).expanduser().resolve()
-            if not assets.is_dir(): raise ValueError('Der Ordner mit Originalabbildungen existiert nicht.')
+            if not assets.is_dir(): raise ValueError('The original figures folder does not exist.')
             generated={p.name for p in (stage/'paper_figures').iterdir()}
             for path in sorted(assets.iterdir()):
                 if path.is_file() and path.suffix.lower() in ['.pdf','.png','.jpg','.jpeg','.eps'] and path.name not in generated:

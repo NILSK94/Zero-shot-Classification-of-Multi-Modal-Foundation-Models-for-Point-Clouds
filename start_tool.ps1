@@ -20,5 +20,5 @@ if (-not (Test-Path -LiteralPath $VirtualPython)) {
 Write-Host "Installing packages ..."
 & $VirtualPython -m pip install --disable-pip-version-check --quiet -r (Join-Path $ProjectDirectory "requirements.txt")
 
-Write-Host "Starting MMFM Paper Lab ..."
+Write-Host "Starting MMFM Lab ..."
 & $VirtualPython -m streamlit run (Join-Path $ProjectDirectory "app.py")

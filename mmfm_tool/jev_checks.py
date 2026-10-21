@@ -25,7 +25,7 @@ def run_classification_preview(
 ) -> tuple[dict[str, object], Path]:
     """Run one small diagnostic request, saved outside the scientific run folders."""
     if len(image_paths) not in (1, 2):
-        raise ValueError("Der Bildtest benötigt genau eine oder zwei Ansichten desselben Objekts.")
+        raise ValueError('The image test requires exactly one or two views of the same object.')
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
     provider = JevProvider(model, api_key)

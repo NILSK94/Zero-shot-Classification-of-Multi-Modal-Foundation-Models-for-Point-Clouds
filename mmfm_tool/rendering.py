@@ -19,13 +19,13 @@ def read_s3dis_points(source_path: str | Path) -> tuple[np.ndarray, np.ndarray]:
     path = Path(source_path)
     values = np.loadtxt(path, dtype=np.float32, ndmin=2)
     if values.shape[0] == 0 or values.shape[1] < 6:
-        raise ValueError(f"Ungültige S3DIS-Annotation (mindestens XYZRGB erwartet): {path}")
+        raise ValueError(f"Invalid S3DIS annotation (at least XYZRGB expected): {path}")
     points = values[:, :3]
     colors = np.clip(values[:, 3:6], 0, 255).astype(np.uint8)
     finite = np.isfinite(points).all(axis=1)
     points, colors = points[finite], colors[finite]
     if len(points) == 0:
-        raise ValueError(f"S3DIS-Annotation enthält keine endlichen Punkte: {path}")
+        raise ValueError(f"The S3DIS annotation contains no finite points: {path}")
     return points, colors
 
 
@@ -102,7 +102,7 @@ def render_rgb_isometric(
     """Render an orthographic RGB point-cloud view without OpenGL/Open3D."""
 
     if image_size < 64:
-        raise ValueError("Die Bildgröße muss mindestens 64 Pixel betragen.")
+        raise ValueError('Image size must be at least 64 pixels.')
     centered = points - ((points.min(axis=0) + points.max(axis=0)) / 2.0)
     right, screen_up, forward = _camera_basis(azimuth, elevation)
     projected_x = centered @ right
@@ -189,7 +189,7 @@ def prepare_s3dis_views(
         discovered = discovered[discovered["area"].astype(str).str.casefold().eq(requested_area.casefold())].copy()
         if discovered.empty:
             available = ", ".join(sorted(scan_s3dis_annotations(s3dis_root)["area"].astype(str).unique()))
-            raise ValueError(f"S3DIS-Area {requested_area} nicht gefunden. Verfügbar: {available or 'keine'}")
+            raise ValueError(f"S3DIS-Area {requested_area} not found. Available: {available or 'none'}")
     selected = select_s3dis(discovered)
     signature = _render_signature(image_size, max_points, point_radius)
 

@@ -119,9 +119,9 @@ def _cohort_stats(results: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 def _paper_status(row: pd.Series) -> str:
     if str(row.get("provider", "")).casefold() == "mock":
-        return "Nur Pipeline-Test"
+        return 'Pipeline check only'
     if str(row.get("dataset", "")).casefold() != "modelnet":
-        return "Datensatzspezifische Auswertung"
+        return "Dataset-specific evaluation"
     exact_cohort = (
         int(row.get("n_objects_min", 0)) == 1860
         and int(row.get("n_objects_max", 0)) == 1860
@@ -129,13 +129,13 @@ def _paper_status(row: pd.Series) -> str:
         and int(row.get("n_classes_max", 0)) == 33
     )
     if not exact_cohort:
-        return "Teillauf – nicht direkt vergleichbar"
+        return 'Partial run – not directly comparable'
     coverage = pd.to_numeric(row.get("coverage_mean"), errors="coerce")
     if pd.notna(coverage) and float(coverage) >= 0.95:
         if str(row.get("protocol_scope", "")) == "modelnet33_exact_ids":
             return "Haupttabelle – historischer 40-Label-Prompt"
         return "Haupttabelle geeignet"
-    return "Exakter Datensatz, aber unvollständige Modellantworten"
+    return 'Exact dataset match, but incomplete model responses'
 
 
 def _s3dis_area_summary(results: pd.DataFrame) -> pd.DataFrame:
@@ -180,7 +180,7 @@ def build_paper_export(runs_root: str | Path, output_root: str | Path) -> PaperE
     output.mkdir(parents=True, exist_ok=True)
     combined, inventory = _load_comparable_runs(runs)
     if combined.empty:
-        raise ValueError(f"Keine auswertbaren Ergebnisläufe unter {runs} gefunden.")
+        raise ValueError(f"No evaluable result runs under {runs} found.")
 
     metrics_root = output / "_metrics_by_protocol"
     evaluated = _evaluate_by_scope(combined, metrics_root)

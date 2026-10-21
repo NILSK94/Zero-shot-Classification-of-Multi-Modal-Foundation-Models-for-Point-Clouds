@@ -56,7 +56,7 @@ def scan_modelnet_manifest(
 
     root = Path(modelnet_root).expanduser().resolve()
     if not root.exists():
-        raise DatasetLayoutError(f"ModelNet-Ordner nicht gefunden: {root}")
+        raise DatasetLayoutError(f"ModelNet folder not found: {root}")
 
     scans = {count: _scan_modelnet_view(_view_root(root, count)) for count in view_counts}
     reference_count = next(
@@ -68,7 +68,7 @@ def scan_modelnet_manifest(
         None,
     )
     if reference_count is None:
-        raise DatasetLayoutError("Kein expliziter ModelNet-Testsplit in den Ansichtsordnern gefunden.")
+        raise DatasetLayoutError('No explicit ModelNet test split found in the view folders.')
 
     test_keys = {
         key
@@ -78,7 +78,7 @@ def scan_modelnet_manifest(
     rows: list[dict[str, object]] = []
     for view_count in sorted(set(int(value) for value in view_counts)):
         if view_count not in (1, 2, 3, 4):
-            raise ValueError("ModelNet unterstützt in diesem Tool genau 1 bis 4 Ansichten.")
+            raise ValueError('This tool supports exactly 1 to 4 ModelNet views.')
         for key in sorted(test_keys):
             entry = scans[view_count].get(key)
             derived_one_view = False
@@ -148,7 +148,7 @@ def select_paired_modelnet(
 def find_s3dis_area_root(s3dis_root: str | Path) -> Path:
     root = Path(s3dis_root).expanduser().resolve()
     if not root.exists():
-        raise DatasetLayoutError(f"S3DIS-Ordner nicht gefunden: {root}")
+        raise DatasetLayoutError(f"S3DIS folder not found: {root}")
 
     valid_area_names = {f"Area_{index}" for index in range(1, 7)}
     candidates = {root}
@@ -165,8 +165,8 @@ def find_s3dis_area_root(s3dis_root: str | Path) -> Path:
     if ranked:
         return sorted(ranked)[0][-1]
     raise DatasetLayoutError(
-        f"Kein Ordner Area_1 bis Area_6 wurde unter {root} gefunden. "
-        "Ein einzelnes vorhandenes Area-Verzeichnis, beispielsweise Area_5, ist ausreichend."
+        f"No Area_1 to Area_6 folder found under {root} found. "
+        "A single available area directory, such as Area_5, is sufficient."
     )
 
 
@@ -218,10 +218,10 @@ def select_s3dis_area(manifest: pd.DataFrame, area: str = "all") -> pd.DataFrame
     if not selected or selected.casefold() in {"all", "alle", "alle areas"}:
         return manifest.sort_values(["label", "area", "sample_id"]).reset_index(drop=True)
     if "area" not in manifest:
-        raise DatasetLayoutError("Das S3DIS-Manifest enthält keine Area-Spalte.")
+        raise DatasetLayoutError('The S3DIS manifest has no area column.')
     filtered = manifest[manifest["area"].astype(str).str.casefold() == selected.casefold()].copy()
     if filtered.empty:
-        raise DatasetLayoutError(f"Keine vorbereiteten S3DIS-Instanzen für {selected} gefunden.")
+        raise DatasetLayoutError(f"No prepared S3DIS instances found for {selected} found.")
     return filtered.sort_values(["label", "sample_id"]).reset_index(drop=True)
 
 
@@ -241,10 +241,10 @@ def image_paths_from_row(row: pd.Series | dict[str, object], view_count: int) ->
     for index in range(view_count):
         value = row.get(f"view_{index}", "")
         if not value:
-            raise DatasetLayoutError(f"Ansicht {index} fehlt für Sample {row.get('sample_id', '?')}.")
+            raise DatasetLayoutError(f"View {index} is missing for sample {row.get('sample_id', '?')}.")
         path = Path(str(value))
         if not path.exists():
-            raise DatasetLayoutError(f"Bilddatei fehlt: {path}")
+            raise DatasetLayoutError(f"Image file is missing: {path}")
         paths.append(path)
     return paths
 

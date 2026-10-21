@@ -10,7 +10,7 @@ def automatic_digest(data: pd.DataFrame, min_support: int = 5) -> dict:
     if data.empty:
         return {}
     if data["protocol_scope"].nunique() != 1 or data["dataset"].nunique() != 1:
-        raise ValueError("Die automatische Auswertung benötigt einen Datensatz und ein Protokoll.")
+        raise ValueError('Automatic evaluation requires one dataset and one protocol.')
     sizes = data.groupby(["series_id", "panel_id"])["sample_id"].nunique()
     minimum = sizes.groupby("series_id").min()
     selected = minimum[minimum.ge(minimum.max() * .95)].index

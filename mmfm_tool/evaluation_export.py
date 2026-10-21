@@ -11,7 +11,7 @@ def build_evaluation_export(runs_root: str | Path, output_root: str | Path, *, r
     """Reuse validated numerical renderers; publish only graphics, data and provenance."""
     output=Path(output_root).expanduser().resolve();runs=Path(runs_root).expanduser().resolve()
     if output==runs or runs in output.parents:
-        raise ValueError('Der Grafikexport darf nicht innerhalb des Ergebnislauf-Ordners liegen.')
+        raise ValueError('The figure export must not be placed inside the results-run folder.')
     output.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='evaluation_export_',dir=output.parent) as folder:
         temp=Path(folder)
@@ -62,9 +62,9 @@ def build_evaluation_export(runs_root: str | Path, output_root: str | Path, *, r
                 if output in path.parents and path.is_file():path.unlink()
         for relative in [*members,'manifest.json']:
             target=(output/relative).resolve()
-            if output not in target.parents:raise ValueError('Ungültiger Exportpfad.')
+            if output not in target.parents:raise ValueError('Invalid export path.')
             target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(stage/relative,target)
-    archive_path=output/'MMFM_Auswertungen.zip'
+    archive_path=output/'MMFM_Evaluations.zip'
     with zipfile.ZipFile(archive_path,'w',compression=zipfile.ZIP_DEFLATED) as archive:
         for relative in sorted([*manifest['files'],'manifest.json']):archive.write(output/relative,relative)
     return PublicationExport(output,archive_path,manifest)

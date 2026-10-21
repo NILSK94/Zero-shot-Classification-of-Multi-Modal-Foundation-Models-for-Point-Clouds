@@ -146,7 +146,7 @@ def _tasks(records: pd.DataFrame, spec: ExperimentSpec, targets: Sequence[ModelT
             elif spec.dataset == "s3dis":
                 for condition in spec.conditions:
                     if condition not in ("rgb", "rgb_aabb"):
-                        raise ValueError(f"Unbekannte S3DIS-Bedingung: {condition}")
+                        raise ValueError(f"Unknown S3DIS condition: {condition}")
                     for _, row in records.iterrows():
                         tasks.append(
                             {
@@ -158,7 +158,7 @@ def _tasks(records: pd.DataFrame, spec: ExperimentSpec, targets: Sequence[ModelT
                             }
                         )
             else:
-                raise ValueError(f"Unbekannter Datensatz: {spec.dataset}")
+                raise ValueError(f"Unknown dataset: {spec.dataset}")
     return tasks
 
 

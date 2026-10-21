@@ -55,7 +55,7 @@ def _file_timestamp(path: Path) -> str:
 def _normalize_file(path: Path, frame: pd.DataFrame, labels: tuple[str, ...]) -> pd.DataFrame:
     missing_columns = sorted(LEGACY_REQUIRED_COLUMNS - set(frame.columns))
     if missing_columns:
-        raise LegacyResultError(f"{path.name}: Pflichtspalten fehlen: {', '.join(missing_columns)}")
+        raise LegacyResultError(f"{path.name}: Required columns are missing: {', '.join(missing_columns)}")
 
     allowed = {label.casefold(): label for label in labels}
     timestamp = _file_timestamp(path)
@@ -72,9 +72,9 @@ def _normalize_file(path: Path, frame: pd.DataFrame, labels: tuple[str, ...]) ->
         if status == "ok":
             error = ""
         elif not candidate:
-            error = "Legacy-Datei enthält keine Modellantwort."
+            error = 'The historical file contains no model response.'
         else:
-            error = "Legacy-Antwort ist kein exakter Klassenname des historischen ModelNet40-Labelraums."
+            error = 'The historical response is not an exact class name from the historical ModelNet40 label set.'
 
         view_count = int(pd.to_numeric(source.get("num_views"), errors="coerce"))
         repeat = int(pd.to_numeric(source.get("run_index"), errors="coerce")) + 1
@@ -127,7 +127,7 @@ def _normalize_file(path: Path, frame: pd.DataFrame, labels: tuple[str, ...]) ->
 def load_legacy_results(root: str | Path) -> LegacyResultBundle:
     source_root = Path(root).expanduser().resolve()
     if not source_root.is_dir():
-        raise LegacyResultError(f"Ordner mit alten Resultaten nicht gefunden: {source_root}")
+        raise LegacyResultError(f"Historical results folder not found: {source_root}")
     source_frames: list[tuple[Path, pd.DataFrame]] = []
     labels: set[str] = set()
     for path in sorted(source_root.glob("*.csv")):
@@ -136,7 +136,7 @@ def load_legacy_results(root: str | Path) -> LegacyResultBundle:
             labels.update(frame["ground_truth"].astype(str).str.strip().str.casefold())
         source_frames.append((path, frame))
     if not source_frames:
-        raise LegacyResultError(f"Keine CSV-Dateien unter {source_root} gefunden.")
+        raise LegacyResultError(f"No CSV files under {source_root} found.")
 
     label_tuple = tuple(sorted(label for label in labels if label))
     normalized_frames = [_normalize_file(path, frame, label_tuple) for path, frame in source_frames]
@@ -161,7 +161,7 @@ def load_legacy_results(root: str | Path) -> LegacyResultBundle:
                 "correct_responses": correct,
                 "accuracy_valid_only": correct / len(success) if len(success) else float("nan"),
                 "end_to_end_accuracy": correct / len(normalized) if len(normalized) else 0.0,
-                "file_state": "vollständig" if len(normalized) == expected_full_rows else "Teillauf",
+                "file_state": 'complete' if len(normalized) == expected_full_rows else 'partial run',
             }
         )
     profile = pd.DataFrame(profile_rows).sort_values(["provider", "model", "view_count"]).reset_index(drop=True)
@@ -180,7 +180,7 @@ def _align_to_current_modelnet(
         .reset_index(drop=True)
     )
     if expected.empty:
-        raise LegacyResultError("Das aktuelle ModelNet-Manifest enthält keine vergleichbaren Testobjekte.")
+        raise LegacyResultError('The current ModelNet manifest contains no comparable test objects.')
 
     aligned_frames: list[pd.DataFrame] = []
     for source_file, group in full_results.groupby("legacy_source_file", sort=True):
@@ -207,7 +207,7 @@ def _align_to_current_modelnet(
         aligned.loc[missing, "pred_label"] = ""
         aligned.loc[missing, "correct"] = False
         aligned.loc[missing, "latency_s"] = float("nan")
-        aligned.loc[missing, "error"] = "Legacy-Teillauf: Ergebniszeile für dieses Vergleichsobjekt fehlt."
+        aligned.loc[missing, "error"] = 'Partial historical run: the result row for this comparison object is missing.'
         for column, default in (
             ("usage_json", "{}"),
             ("geometry_json", "{}"),
