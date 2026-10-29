@@ -31,8 +31,4 @@ Choose dataset folders and models in the sidebar. Enter credentials there or set
 - **Evaluations:** generate and download figures and data from saved results, without new model requests.
 
 
-## Local data and settings
 
-Datasets and results are not included in the source repository. The ignored `data_paths.local.json` can store local paths for `modelnet`, `s3dis`, `prepared`, `runs`, `legacy_results`, `historical_csv` and `paper_export`. Environment variables from `.env.example` take precedence. Evaluation does not modify source datasets.
-
-`.gitignore` includes application source, required configuration and launch scripts. Local datasets, results, generated graphics, backups, machine-specific paths, virtual environments, credentials, private documents and development tests are excluded from publication.
